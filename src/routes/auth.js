@@ -94,6 +94,34 @@ router.post('/login', checkApiKey, async (req, res) => {
   }
 });
 
+// POST /api/validatekey
+// Body esperado: { "key": "XXXX-XXXX-XXXX-XXXX" }
+// Só confere se a key existe no banco - não marca como usada, pode ser
+// reaproveitada em várias verificações.
+router.post('/validatekey', checkApiKey, async (req, res) => {
+  try {
+    const { key } = req.body;
+
+    if (!key) {
+      return res.status(400).json({ success: false, message: 'Key é obrigatória.' });
+    }
+
+    const [rows] = await pool.query(
+      'SELECT id FROM keys_table WHERE key_value = ? LIMIT 1',
+      [key]
+    );
+
+    if (rows.length === 0) {
+      return res.status(401).json({ success: false, message: 'Key inválida.' });
+    }
+
+    return res.status(200).json({ success: true, message: 'Key válida.' });
+  } catch (err) {
+    console.error('Erro no /validatekey:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
+  }
+});
+
 // GET /api/status - só pra você testar se a API está no ar
 router.get('/status', (req, res) => {
   res.json({ online: true, timestamp: new Date().toISOString() });
