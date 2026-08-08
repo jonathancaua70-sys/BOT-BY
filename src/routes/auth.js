@@ -17,6 +17,9 @@ const { generateMFASecret, enableMFA, disableMFA, isMFAEnabled, validateTOTP, va
 // Sistema de logs de segurança
 const securityLogPath = path.join(__dirname, '../../logs/security.log');
 
+// Store para rate limiting por usuário
+const userRateLimitStore = new Map();
+
 // Garante que o diretório de logs existe
 const logsDir = path.dirname(securityLogPath);
 if (!fs.existsSync(logsDir)) {
@@ -274,10 +277,10 @@ router.get('/captcha', (req, res) => {
 // Body esperado: { "username": "...", "password": "..." }
 router.post('/login', applyRateLimit('login'), async (req, res) => {
   const startTime = Date.now();
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   
   try {
     const { username, password, captchaId, captchaAnswer } = req.body;
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     // Valida CAPTCHA
     if (!captchaId || !captchaAnswer) {
