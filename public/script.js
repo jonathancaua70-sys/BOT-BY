@@ -652,8 +652,8 @@ async function loadDashboardData() {
             if (document.getElementById('countKeys')) document.getElementById('countKeys').textContent = keyCount;
             if (document.getElementById('countActiveKeys')) document.getElementById('countActiveKeys').textContent = activeKeysCount;
             
-            // Atualiza status do sistema se estiver visível
-            updateSystemStatus(statusData);
+            // Atualiza status do sistema se estiver visível (força refresh inicial)
+            updateSystemStatus(statusData, true);
         }
     } catch (error) {
         console.error('Erro ao carregar dados do dashboard:', error);
@@ -748,7 +748,7 @@ function updateKeysList(keys) {
     contentArea.innerHTML = keysHTML;
 }
 
-function updateSystemStatus(statusData) {
+function updateSystemStatus(statusData, forceRefresh = false) {
     const contentArea = document.getElementById('contentArea');
     
     // Verifica se estamos na categoria de status
@@ -769,72 +769,109 @@ function updateSystemStatus(statusData) {
             ? `${uptimeHours}h ${uptimeMinutes}m ${uptimeSeconds}s`
             : `${uptimeMinutes}m ${uptimeSeconds}s`;
         
-        contentArea.innerHTML = `
-            <div class="status-container">
-                <div class="status-item ${dbStatus}">
-                    <div class="status-icon">
-                        <i class="fas fa-database"></i>
-                    </div>
-                    <div class="status-details">
-                        <h4>Banco de Dados</h4>
-                        <p class="status-message">${statusData.database?.message || 'Desconhecido'}</p>
-                        <div class="status-meta">
-                            <span class="ping-indicator">
-                                <i class="fas fa-clock"></i> Ping: ${dbPing}ms
-                            </span>
-                            <span class="host-info">
-                                ${statusData.database?.host}:${statusData.database?.port}
-                            </span>
+        // Se for forceRefresh, recria o HTML (usado no carregamento inicial)
+        if (forceRefresh || !contentArea.querySelector('.status-container')) {
+            contentArea.innerHTML = `
+                <div class="status-container">
+                    <div class="status-item ${dbStatus}" data-status-type="database">
+                        <div class="status-icon">
+                            <i class="fas fa-database"></i>
+                        </div>
+                        <div class="status-details">
+                            <h4>Banco de Dados</h4>
+                            <p class="status-message">${statusData.database?.message || 'Desconhecido'}</p>
+                            <div class="status-meta">
+                                <span class="ping-indicator">
+                                    <i class="fas fa-clock"></i> Ping: <span class="ping-value">${dbPing}</span>ms
+                                </span>
+                                <span class="host-info">
+                                    ${statusData.database?.host}:${statusData.database?.port}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="status-indicator ${dbStatus}">
+                            <span class="status-dot"></span>
+                            <span class="status-text">${dbStatus === 'online' ? 'Online' : 'Offline'}</span>
                         </div>
                     </div>
-                    <div class="status-indicator ${dbStatus}">
-                        <span class="status-dot"></span>
-                        <span class="status-text">${dbStatus === 'online' ? 'Online' : 'Offline'}</span>
+                    
+                    <div class="status-item online" data-status-type="bot">
+                        <div class="status-icon">
+                            <i class="fas fa-robot"></i>
+                        </div>
+                        <div class="status-details">
+                            <h4>Bot Discord</h4>
+                            <p class="status-message">${statusData.bot?.username || 'Desconhecido'}</p>
+                            <div class="status-meta">
+                                <span class="uptime-indicator">
+                                    <i class="fas fa-clock"></i> Uptime: <span class="uptime-value">${uptimeText}</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="status-indicator online">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Online</span>
+                        </div>
+                    </div>
+                    
+                    <div class="status-item online" data-status-type="server">
+                        <div class="status-icon">
+                            <i class="fas fa-server"></i>
+                        </div>
+                        <div class="status-details">
+                            <h4>Servidor API</h4>
+                            <p class="status-message">Sistema operacional</p>
+                            <div class="status-meta">
+                                <span class="cpu-indicator">
+                                    <i class="fas fa-microchip"></i> CPU: <span class="cpu-value">${cpuPercent}</span>%
+                                </span>
+                                <span class="memory-indicator">
+                                    <i class="fas fa-memory"></i> Mem: <span class="memory-value">${memoryUsed}</span>MB/<span class="memory-total">${memoryTotal}</span>MB
+                                </span>
+                            </div>
+                        </div>
+                        <div class="status-indicator online">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Online</span>
+                        </div>
                     </div>
                 </div>
+            `;
+        } else {
+            // Atualiza apenas os valores específicos sem recriar o HTML
+            const dbItem = contentArea.querySelector('[data-status-type="database"]');
+            const botItem = contentArea.querySelector('[data-status-type="bot"]');
+            const serverItem = contentArea.querySelector('[data-status-type="server"]');
+            
+            if (dbItem) {
+                const pingValue = dbItem.querySelector('.ping-value');
+                const statusIndicator = dbItem.querySelector('.status-indicator');
+                const statusText = dbItem.querySelector('.status-text');
                 
-                <div class="status-item online">
-                    <div class="status-icon">
-                        <i class="fas fa-robot"></i>
-                    </div>
-                    <div class="status-details">
-                        <h4>Bot Discord</h4>
-                        <p class="status-message">${statusData.bot?.username || 'Desconhecido'}</p>
-                        <div class="status-meta">
-                            <span class="uptime-indicator">
-                                <i class="fas fa-clock"></i> Uptime: ${uptimeText}
-                            </span>
-                        </div>
-                    </div>
-                    <div class="status-indicator online">
-                        <span class="status-dot"></span>
-                        <span class="status-text">Online</span>
-                    </div>
-                </div>
+                if (pingValue) pingValue.textContent = dbPing;
+                if (statusIndicator) {
+                    statusIndicator.className = `status-indicator ${dbStatus}`;
+                }
+                if (statusText) {
+                    statusText.textContent = dbStatus === 'online' ? 'Online' : 'Offline';
+                }
+            }
+            
+            if (botItem) {
+                const uptimeValue = botItem.querySelector('.uptime-value');
+                if (uptimeValue) uptimeValue.textContent = uptimeText;
+            }
+            
+            if (serverItem) {
+                const cpuValue = serverItem.querySelector('.cpu-value');
+                const memoryValue = serverItem.querySelector('.memory-value');
+                const memoryTotal = serverItem.querySelector('.memory-total');
                 
-                <div class="status-item online">
-                    <div class="status-icon">
-                        <i class="fas fa-server"></i>
-                    </div>
-                    <div class="status-details">
-                        <h4>Servidor API</h4>
-                        <p class="status-message">Sistema operacional</p>
-                        <div class="status-meta">
-                            <span class="cpu-indicator">
-                                <i class="fas fa-microchip"></i> CPU: ${cpuPercent}%
-                            </span>
-                            <span class="memory-indicator">
-                                <i class="fas fa-memory"></i> Mem: ${memoryUsed}MB/${memoryTotal}MB
-                            </span>
-                        </div>
-                    </div>
-                    <div class="status-indicator online">
-                        <span class="status-dot"></span>
-                        <span class="status-text">Online</span>
-                    </div>
-                </div>
-            </div>
-        `;
+                if (cpuValue) cpuValue.textContent = cpuPercent;
+                if (memoryValue) memoryValue.textContent = memoryUsed;
+                if (memoryTotal) memoryTotal.textContent = memoryTotal;
+            }
+        }
     }
 }
 
@@ -847,7 +884,7 @@ function startAutoRefresh() {
             const statusData = await statusResponse.json();
             
             if (statusData.online) {
-                updateSystemStatus(statusData);
+                updateSystemStatus(statusData, false); // Não força refresh, apenas atualiza valores
                 
                 // Atualiza logs se estiver na categoria de logs
                 if (currentCategory === 'logs') {
