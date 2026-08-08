@@ -10,6 +10,10 @@ const discordClient = require('./discordClient');
 
 // ===== API (Express) =====
 const app = express();
+
+// Configura trust proxy para Render
+app.set('trust proxy', true);
+
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
@@ -35,6 +39,12 @@ testConnection();
 
 // ===== Bot do Discord =====
 async function loginDiscordWithRetry(maxRetries = 5, baseDelayMs = 5000) {
+  // Verifica se o token está configurado
+  if (!process.env.DISCORD_TOKEN) {
+    console.error('❌ DISCORD_TOKEN não está definido no .env');
+    return;
+  }
+  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       await discordClient.login(process.env.DISCORD_TOKEN);
