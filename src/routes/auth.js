@@ -275,42 +275,52 @@ router.get('/captcha', (req, res) => {
 
 // POST /api/login
 // Body esperado: { "username": "...", "password": "..." }
+// Para integração externa, envie header x-api-key para pular CAPTCHA/CSRF
 router.post('/login', applyRateLimit('login'), async (req, res) => {
   const startTime = Date.now();
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   
   try {
     const { username, password, captchaId, captchaAnswer } = req.body;
+    const apiKey = req.headers['x-api-key'];
+    
+    // Verifica se é requisição externa (API key)
+    const isExternalRequest = apiKey === process.env.EXTERNAL_API_KEY;
+    
+    // Pula CAPTCHA para requisições externas autenticadas por API key
+    if (!isExternalRequest) {
+      // Valida CAPTCHA
+      if (!captchaId || !captchaAnswer) {
+        console.log(`[LOGIN] ❌ CAPTCHA ausente - "${username}" (IP: ${ip})`);
+        logSecurityEvent('LOGIN_CAPTCHA_MISSING', {
+          username,
+          ip,
+          reason: 'CAPTCHA não fornecido'
+        });
+        return res.status(400).json({ 
+          success: false, 
+          message: 'CAPTCHA é obrigatório.',
+          requireCaptcha: true
+        });
+      }
 
-    // Valida CAPTCHA
-    if (!captchaId || !captchaAnswer) {
-      console.log(`[LOGIN] ❌ CAPTCHA ausente - "${username}" (IP: ${ip})`);
-      logSecurityEvent('LOGIN_CAPTCHA_MISSING', {
-        username,
-        ip,
-        reason: 'CAPTCHA não fornecido'
-      });
-      return res.status(400).json({ 
-        success: false, 
-        message: 'CAPTCHA é obrigatório.',
-        requireCaptcha: true
-      });
-    }
-
-    const captchaValidation = validateCaptcha(captchaId, captchaAnswer);
-    if (!captchaValidation.valid) {
-      console.log(`[LOGIN] ❌ CAPTCHA inválido - "${username}" (IP: ${ip}) - ${captchaValidation.reason}`);
-      logSecurityEvent('LOGIN_CAPTCHA_INVALID', {
-        username,
-        ip,
-        reason: captchaValidation.reason
-      });
-      return res.status(400).json({ 
-        success: false, 
-        message: captchaValidation.reason,
-        requireCaptcha: true,
-        attemptsRemaining: captchaValidation.attemptsRemaining
-      });
+      const captchaValidation = validateCaptcha(captchaId, captchaAnswer);
+      if (!captchaValidation.valid) {
+        console.log(`[LOGIN] ❌ CAPTCHA inválido - "${username}" (IP: ${ip}) - ${captchaValidation.reason}`);
+        logSecurityEvent('LOGIN_CAPTCHA_INVALID', {
+          username,
+          ip,
+          reason: captchaValidation.reason
+        });
+        return res.status(400).json({ 
+          success: false, 
+          message: captchaValidation.reason,
+          requireCaptcha: true,
+          attemptsRemaining: captchaValidation.attemptsRemaining
+        });
+      }
+    } else {
+      console.log(`[LOGIN] 🔑 Requisição externa via API key - "${username}" (IP: ${ip})`);
     }
 
     // Valida e sanitiza as credenciais
@@ -984,6 +994,97 @@ router.get('/mfa/status', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('Erro no /mfa/status:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
+  }
+});
+
+// POST /api/auth/external
+// Endpoint para autenticação externa (clientes C++, etc.)
+// Não requer CAPTCHA/CSRF, mas requer API key válida
+router.post('/auth/external', applyRateLimit('external'), async (req, res) => {
+  const startTime = Date.now();
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  
+  try {
+    const { username, password } = req.body;
+    const apiKey = req.headers['x-api-key'];
+    
+    // Valida API key
+    const EXTERNAL_API_KEY = process.env.EXTERNAL_API_KEY;
+    if (!EXTERNAL_API_KEY || apiKey !== EXTERNAL_API_KEY) {
+      console.log(`[EXTERNAL_AUTH] ❌ API key inválida - IP: ${ip}`);
+      logSecurityEvent('EXTERNAL_AUTH_INVALID_API_KEY', { ip });
+      await logAttack('Invalid API Key Attempt', ip);
+      return res.status(401).json({ success: false, message: 'API key inválida' });
+    }
+    
+    // Valida credenciais básicas
+    if (!username || !password) {
+      return res.status(400).json({ success: false, message: 'Usuário e senha são obrigatórios.' });
+    }
+    
+    // Rate limiting por usuário
+    const rateLimitCheck = checkUserRateLimit(username, 10, 15 * 60 * 1000); // 10 tentativas em 15 min
+    if (!rateLimitCheck.allowed) {
+      console.log(`[EXTERNAL_AUTH] ❌ Rate limit excedido - "${username}" (IP: ${ip})`);
+      logSecurityEvent('EXTERNAL_AUTH_RATE_LIMIT_EXCEEDED', { username, ip });
+      await logAttack('External Auth Rate Limit Exceeded', ip, { username });
+      return res.status(429).json({ success: false, message: rateLimitCheck.message });
+    }
+    
+    const sanitizedUsername = sanitizeInput(username);
+    
+    const [rows] = await pool.query(
+      'SELECT id, username, password, user_avatar FROM users WHERE username = ? LIMIT 1',
+      [sanitizedUsername]
+    );
+    
+    const user = rows[0];
+    
+    // Verifica senha (com timing attack protection)
+    const senhaCorreta = await bcrypt.compare(password, user ? user.password : DUMMY_HASH);
+    
+    if (!user || !senhaCorreta) {
+      const reason = !user ? 'Usuário não encontrado' : 'Senha incorreta';
+      console.log(`[EXTERNAL_AUTH] ❌ Falhou - "${sanitizedUsername}" (${reason}) (IP: ${ip})`);
+      logSecurityEvent('EXTERNAL_AUTH_FAILED', {
+        username: sanitizedUsername,
+        ip,
+        reason,
+        userExists: !!user
+      });
+      
+      await logApiLogin(sanitizedUsername, false, ip, reason);
+      return res.status(401).json({ success: false, message: 'Usuário ou senha incorretos.' });
+    }
+    
+    // Login externo aprovado
+    console.log(`[EXTERNAL_AUTH] ✅ Sucesso - "${sanitizedUsername}" (IP: ${ip})`);
+    logSecurityEvent('EXTERNAL_AUTH_SUCCESS', {
+      username: sanitizedUsername,
+      ip,
+      userId: user.id
+    });
+    
+    await logApiLogin(sanitizedUsername, true, ip, 'External auth successful');
+    recordAuthMetric('external_auth_success', { userId: user.id, ip });
+    
+    const responseTime = Date.now() - startTime;
+    await logBotApi('/api/auth/external', 'POST', ip, true, responseTime);
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Login realizado com sucesso.',
+      user: {
+        id: user.id,
+        username: user.username,
+        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'
+      }
+    });
+  } catch (err) {
+    console.error('Erro no /auth/external:', err);
+    const responseTime = Date.now() - startTime;
+    await logBotApi('/api/auth/external', 'POST', ip, false, responseTime);
     return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
   }
 });
