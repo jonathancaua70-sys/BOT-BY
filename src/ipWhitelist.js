@@ -144,10 +144,11 @@ function geoBlock(allowedCountries = ['BR']) {
   };
 }
 
+// Store global para rate limiting por IP
+const ipStore = new Map();
+
 // Middleware para rate limiting por IP específico
 function createIPRateLimit(maxRequests = 100, windowMs = 15 * 60 * 1000) {
-  const ipStore = new Map();
-  
   return (req, res, next) => {
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const now = Date.now();
