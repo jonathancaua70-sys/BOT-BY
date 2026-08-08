@@ -66,6 +66,12 @@ function csrfProtection(req, res, next) {
     return next();
   }
   
+  // Requisições autenticadas por API key não precisam de CSRF
+  // CSRF protege sessões de navegador (cookies), não chamadas máquina-a-máquina
+  if (req.headers['x-api-key']) {
+    return next();
+  }
+  
   // Para requisições que modificam dados, valida CSRF token
   const token = req.headers['x-csrf-token'] || req.body?.csrfToken;
   
