@@ -40,8 +40,52 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
   maxAge: 86400 // 24 horas
 }));
-app.use(express.json());
+
+// Middleware para logar corpo bruto de requisições POST (para debug)
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.path.includes('/auth/external')) {
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+    });
+    req.on('end', () => {
+      console.log('📥 Raw POST body for /auth/external:', {
+        contentType: req.get('Content-Type'),
+        contentLength: req.get('Content-Length'),
+        body: data.substring(0, 500), // Primeiros 500 chars
+        ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress
+      });
+    });
+  }
+  next();
+});
+
+// Middleware JSON com melhor tratamento de erros
+app.use(express.json({
+  strict: false, // Permite JSON menos estrito
+  limit: '10mb', // Limite de tamanho do corpo
+}));
+
 app.use(cookieParser());
+
+// Middleware para logar corpo da requisição em caso de erro de JSON
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    console.error('❌ JSON Parse Error:', {
+      url: req.url,
+      method: req.method,
+      contentType: req.get('Content-Type'),
+      body: req.body,
+      rawBody: err.body,
+      ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress
+    });
+    return res.status(400).json({ 
+      success: false, 
+      message: 'JSON inválido. Verifique o formato da requisição.' 
+    });
+  }
+  next(err);
+});
 
 // Remove header x-powered-by que expõe tecnologia
 app.disable('x-powered-by');
