@@ -107,7 +107,7 @@ router.post('/login', loginLimiter, checkApiKey, async (req, res) => {
     }
 
     const [rows] = await pool.query(
-      'SELECT id, username, password FROM users WHERE username = ? LIMIT 1',
+      'SELECT id, username, password, user_avatar FROM users WHERE username = ? LIMIT 1',
       [username]
     );
 
@@ -146,7 +146,11 @@ router.post('/login', loginLimiter, checkApiKey, async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Login realizado com sucesso.',
-      user: { id: user.id, username: user.username },
+      user: { 
+        id: user.id, 
+        username: user.username,
+        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'
+      },
     });
   } catch (err) {
     console.error('Erro no /login:', err);
@@ -157,8 +161,30 @@ router.post('/login', loginLimiter, checkApiKey, async (req, res) => {
 // GET /api/me
 // Retorna os dados do usuário logado com base no cookie de sessão.
 // O dashboard deve chamar isso ao carregar, em vez de confiar no localStorage.
-router.get('/me', requireAuth, (req, res) => {
-  return res.status(200).json({ success: true, user: req.user });
+router.get('/me', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, username, user_avatar FROM users WHERE id = ? LIMIT 1',
+      [req.user.id]
+    );
+    
+    const user = rows[0];
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+    
+    return res.status(200).json({ 
+      success: true, 
+      user: { 
+        id: user.id, 
+        username: user.username,
+        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'
+      } 
+    });
+  } catch (err) {
+    console.error('Erro no /me:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
+  }
 });
 
 // POST /api/logout
