@@ -767,7 +767,7 @@ function updateUsersList(users) {
         usersHTML += `
             <div class="user-item">
                 <div class="user-avatar">
-                    <img src="${userAvatar}" alt="${user.username}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+                    <img src="${userAvatar}" alt="${user.username}" class="user-avatar-img" data-fallback="https://cdn.discordapp.com/embed/avatars/0.png">
                 </div>
                 <div class="user-info">
                     <h4>${user.username}</h4>
@@ -775,7 +775,7 @@ function updateUsersList(users) {
                     <p>Criado em: ${createdAt}</p>
                 </div>
                 <div class="user-creator">
-                    <img src="${creatorAvatar}" alt="Criador" class="creator-avatar" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+                    <img src="${creatorAvatar}" alt="Criador" class="creator-avatar-img" data-fallback="https://cdn.discordapp.com/embed/avatars/0.png">
                     <span class="user-role ${creatorRole}">${creatorRole}</span>
                 </div>
                 <div class="user-actions">
@@ -787,6 +787,21 @@ function updateUsersList(users) {
     usersHTML += '</div>';
     
     contentArea.innerHTML = usersHTML;
+    
+    // Handle image errors without inline onerror
+    const userAvatarImgs = contentArea.querySelectorAll('.user-avatar-img');
+    userAvatarImgs.forEach(img => {
+        img.addEventListener('error', function() {
+            this.src = this.dataset.fallback;
+        });
+    });
+    
+    const creatorAvatarImgs = contentArea.querySelectorAll('.creator-avatar-img');
+    creatorAvatarImgs.forEach(img => {
+        img.addEventListener('error', function() {
+            this.src = this.dataset.fallback;
+        });
+    });
 }
 
 function updateKeysList(keys) {
