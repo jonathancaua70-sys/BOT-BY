@@ -121,10 +121,8 @@ app.get('/api/csrf-token', provideCSRFToken, (req, res) => {
   res.json({ success: true, csrfToken: res.locals.csrfToken });
 });
 
-// Endpoint externo sem CSRF (para integração C++, etc.)
-app.use('/api/auth/external', authRoutes);
-
-// Aplica CSRF protection nas rotas da API (exceto external)
+// Aplica CSRF protection nas rotas da API
+// O middleware agora pula CSRF automaticamente quando x-api-key está presente
 app.use('/api', csrfProtection, authRoutes);
 
 // Rota principal redireciona para login
