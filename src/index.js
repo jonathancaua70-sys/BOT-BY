@@ -43,6 +43,9 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
+// Remove header x-powered-by que expõe tecnologia
+app.disable('x-powered-by');
+
 // Headers de segurança HTTP
 app.use((req, res, next) => {
   // Proteção contra clickjacking
@@ -54,10 +57,10 @@ app.use((req, res, next) => {
   // Habilita filtro XSS do navegador
   res.setHeader('X-XSS-Protection', '1; mode=block');
   
-  // Política de segurança de conteúdo
+  // Política de segurança de conteúdo (removido unsafe-inline de script-src)
   res.setHeader('Content-Security-Policy', 
     "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+    "script-src 'self' https://cdn.jsdelivr.net; " +
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
     "img-src 'self' data: https://cdn.discordapp.com; " +
     "font-src 'self' https://cdn.jsdelivr.net; " +
@@ -67,6 +70,24 @@ app.use((req, res, next) => {
   
   // Referrer Policy
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  
+  // Permissions Policy - controla APIs do navegador
+  res.setHeader('Permissions-Policy', 
+    'geolocation=(), ' +
+    'microphone=(), ' +
+    'camera=(), ' +
+    'payment=(), ' +
+    'usb=(), ' +
+    'magnetometer=(), ' +
+    'gyroscope=(), ' +
+    'accelerometer=()'
+  );
+  
+  // Cross-Origin Opener Policy - protege contra window.opener access
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  
+  // Cross-Origin Embedder Policy - requer COOP para funcionar corretamente
+  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
   
   // HSTS (apenas em produção com HTTPS)
   if (process.env.NODE_ENV === 'production') {
