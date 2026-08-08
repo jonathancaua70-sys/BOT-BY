@@ -160,6 +160,9 @@ module.exports = {
     const username = interaction.options.getString('usuario');
     const password = interaction.options.getString('senha');
 
+    // Captura informações do criador
+    const creator = interaction.user;
+
     // Responde em modo "efêmero" (só quem usou o comando vê a mensagem),
     // já que estamos falando de senha aqui.
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -190,8 +193,6 @@ module.exports = {
 
       const hash = await bcrypt.hash(password, 12);
       
-      // Captura informações do criador
-      const creator = interaction.user;
       const creatorAvatar = creator.displayAvatarURL({ size: 128, format: 'png' });
       
       // Determina o cargo do criador (verifica se é admin)
