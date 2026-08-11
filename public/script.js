@@ -5,7 +5,6 @@ let sessionStartTime = null;
 let currentCategory = 'all';
 let isDarkTheme = true;
 let csrfToken = null;
-let currentCaptcha = null;
 
 // Obtém CSRF token do servidor
 async function getCSRFToken() {
@@ -22,48 +21,9 @@ async function getCSRFToken() {
   return null;
 }
 
-// Obtém CAPTCHA do servidor
-async function getCaptcha() {
-  try {
-    const response = await fetch(`${API_URL}/captcha`);
-    const data = await response.json();
-    if (data.success) {
-      currentCaptcha = {
-        id: data.captchaId,
-        question: data.question,
-        expiresAt: data.expiresAt
-      };
-      return currentCaptcha;
-    }
-  } catch (error) {
-    console.error('Erro ao obter CAPTCHA:', error);
-  }
-  return null;
-}
-
-// Função para carregar CAPTCHA na UI
-async function loadCaptcha() {
-  const captchaQuestion = document.getElementById('captchaQuestion');
-  if (!captchaQuestion) return;
-  
-  captchaQuestion.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Carregando...';
-  
-  const captcha = await getCaptcha();
-  if (captcha) {
-    captchaQuestion.textContent = captcha.question;
-  } else {
-    captchaQuestion.textContent = 'Erro ao carregar';
-  }
-}
-
 // Adiciona classe à página de login
 if (document.getElementById('loginForm')) {
     initLoginPage();
-}
-
-// Verifica se estamos na página de dashboard
-if (document.getElementById('logoutBtn')) {
-    initDashboardPage();
 }
 
 // Verifica se estamos na página de dashboard
@@ -88,35 +48,16 @@ function initLoginPage() {
     // Aplica tema salvo
     applyTheme();
     
-    // Carrega CAPTCHA ao abrir a página
-    loadCaptcha();
-    
-    // Listener para refresh do CAPTCHA
-    document.getElementById('captchaRefresh').addEventListener('click', () => {
-        loadCaptcha();
-    });
-    
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
-        const captchaAnswer = document.getElementById('captchaAnswer').value;
         
         // Obtém CSRF token antes de fazer login
         const token = await getCSRFToken();
         if (!token) {
             errorMessage.textContent = 'Erro ao obter token de segurança. Tente novamente.';
-            errorMessage.classList.add('show');
-            setTimeout(() => {
-                errorMessage.classList.remove('show');
-            }, 5000);
-            return;
-        }
-        
-        // Valida CAPTCHA
-        if (!currentCaptcha || !captchaAnswer) {
-            errorMessage.textContent = 'CAPTCHA é obrigatório.';
             errorMessage.classList.add('show');
             setTimeout(() => {
                 errorMessage.classList.remove('show');
@@ -133,9 +74,7 @@ function initLoginPage() {
                 },
                 body: JSON.stringify({ 
                     username, 
-                    password,
-                    captchaId: currentCaptcha.id,
-                    captchaAnswer
+                    password
                 })
             });
             
@@ -149,13 +88,6 @@ function initLoginPage() {
             } else {
                 errorMessage.textContent = data.message;
                 errorMessage.classList.add('show');
-                
-                // Se falhar por CAPTCHA, recarrega automaticamente
-                if (data.requireCaptcha) {
-                    loadCaptcha();
-                    document.getElementById('captchaAnswer').value = '';
-                }
-                
                 setTimeout(() => {
                     errorMessage.classList.remove('show');
                 }, 5000);
@@ -1023,10 +955,19 @@ function toggleTheme() {
 }
 
 function applyTheme() {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'light') isDarkTheme = false;
+    if (saved === 'dark') isDarkTheme = true;
+
     const loginContainer = document.querySelector('.login-container');
     const dashboardContainer = document.querySelector('.dashboard-container');
     const themeButtons = document.querySelectorAll('.theme-toggle-btn');
     
+    document.documentElement.classList.toggle('theme-light', !isDarkTheme);
+    document.documentElement.classList.toggle('theme-dark', isDarkTheme);
+    document.body.classList.toggle('theme-light', !isDarkTheme);
+    document.body.classList.toggle('theme-dark', isDarkTheme);
+
     // Aplica tema na página de login
     if (loginContainer) {
         if (isDarkTheme) {
@@ -1034,6 +975,12 @@ function applyTheme() {
         } else {
             loginContainer.classList.add('light-theme');
         }
+    }
+
+    // Card login (estilo nitradas)
+    const loginCard = document.querySelector('.login-card');
+    if (loginCard) {
+        // tema controlado via body.theme-*
     }
     
     // Aplica tema na página de dashboard
@@ -1050,15 +997,17 @@ function applyTheme() {
         const icon = btn.querySelector('i');
         const text = btn.querySelector('span');
         
+        if (!icon) return;
+
         if (isDarkTheme) {
             icon.classList.remove('fa-sun');
             icon.classList.add('fa-moon');
-            text.textContent = 'Dark';
+            if (text) text.textContent = 'Dark';
             btn.classList.remove('light');
         } else {
             icon.classList.remove('fa-moon');
             icon.classList.add('fa-sun');
-            text.textContent = 'Light';
+            if (text) text.textContent = 'Light';
             btn.classList.add('light');
         }
     });
