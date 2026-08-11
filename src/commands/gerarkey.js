@@ -59,9 +59,44 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const tempo = interaction.options.getString('tempo');
-    const isLifetime = tempo === 'lifetime';
-    const durationDays = isLifetime ? null : parseInt(tempo, 10);
+    const rawTempo = String(interaction.options.getString('tempo') || '').trim();
+    const tempoMap = {
+      '1': 1,
+      '3': 3,
+      '7': 7,
+      '15': 15,
+      '30': 30,
+      '90': 90,
+      '365': 365,
+      lifetime: null,
+      Lifetime: null
+    };
+
+    let isLifetime = false;
+    let durationDays = null;
+
+    if (rawTempo.toLowerCase() === 'lifetime') {
+      isLifetime = true;
+      durationDays = null;
+    } else if (Object.prototype.hasOwnProperty.call(tempoMap, rawTempo)) {
+      durationDays = tempoMap[rawTempo];
+      isLifetime = durationDays === null;
+    } else {
+      const n = Number.parseInt(rawTempo, 10);
+      if (!Number.isFinite(n) || n < 1) {
+        return interaction.editReply(
+          `❌ Tempo inválido (\`${rawTempo || 'vazio'}\`). Rode \`node src/deployCommands.js\` e tente de novo.`
+        );
+      }
+      durationDays = n;
+      isLifetime = false;
+    }
+
+    // Nunca manda NaN pro MySQL
+    if (!isLifetime && !Number.isFinite(durationDays)) {
+      return interaction.editReply('❌ Duração inválida. Tente novamente.');
+    }
+    if (isLifetime) durationDays = null;
 
     try {
       let key;
@@ -77,12 +112,19 @@ module.exports = {
         tentativas++;
       }
 
-      const creatorAvatar = interaction.user.displayAvatarURL({ size: 128, extension: 'png' });
+      let creatorAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+      try {
+        creatorAvatar = interaction.user.displayAvatarURL({ size: 128, extension: 'png' });
+      } catch (_) {
+        try {
+          creatorAvatar = interaction.user.displayAvatarURL({ size: 128, format: 'png' });
+        } catch (__) {}
+      }
 
       await pool.query(
         `INSERT INTO keys_table (key_value, is_lifetime, duration_days, creator_avatar)
          VALUES (?, ?, ?, ?)`,
-        [key, isLifetime ? 1 : 0, durationDays, creatorAvatar]
+        [key, isLifetime ? 1 : 0, isLifetime ? null : durationDays, creatorAvatar]
       );
 
       const label = isLifetime ? 'Lifetime' : `${durationDays} dia(s)`;
