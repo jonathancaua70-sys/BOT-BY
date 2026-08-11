@@ -31,6 +31,37 @@ if (document.getElementById('logoutBtn')) {
     initDashboardPage();
 }
 
+// Compat com API antiga no Render que ainda exige captcha matemático
+async function fetchAndSolveCaptcha() {
+    try {
+        const response = await fetch(`${API_URL}/captcha`);
+        const data = await response.json();
+        if (!data.success || !data.captchaId || !data.question) return null;
+
+        // question: "9 + 10 = ?" ou "12 - 3 = ?"
+        const match = String(data.question).match(/(\d+)\s*([+\-])\s*(\d+)/);
+        if (!match) return null;
+
+        const a = parseInt(match[1], 10);
+        const op = match[2];
+        const b = parseInt(match[3], 10);
+        const captchaAnswer = op === '+' ? a + b : a - b;
+
+        return { captchaId: data.captchaId, captchaAnswer };
+    } catch (error) {
+        console.error('Erro ao obter captcha:', error);
+        return null;
+    }
+}
+
+function showLoginError(errorMessage, text) {
+    errorMessage.textContent = text;
+    errorMessage.classList.add('show');
+    setTimeout(() => {
+        errorMessage.classList.remove('show');
+    }, 5000);
+}
+
 function initLoginPage() {
     const loginForm = document.getElementById('loginForm');
     const errorMessage = document.getElementById('errorMessage');
@@ -53,29 +84,40 @@ function initLoginPage() {
         
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
+        const submitBtn = document.getElementById('btn-submit');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Entrando...';
+        }
         
         // Obtém CSRF token antes de fazer login
         const token = await getCSRFToken();
         if (!token) {
-            errorMessage.textContent = 'Erro ao obter token de segurança. Tente novamente.';
-            errorMessage.classList.add('show');
-            setTimeout(() => {
-                errorMessage.classList.remove('show');
-            }, 5000);
+            showLoginError(errorMessage, 'Erro ao obter token de segurança. Tente novamente.');
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Entrar';
+            }
             return;
         }
+
+        // API no Render ainda pode exigir captcha — resolve em background
+        const captcha = await fetchAndSolveCaptcha();
         
         try {
+            const body = { username, password };
+            if (captcha) {
+                body.captchaId = captcha.captchaId;
+                body.captchaAnswer = captcha.captchaAnswer;
+            }
+
             const response = await fetch(`${API_URL}/login`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRF-Token': token
                 },
-                body: JSON.stringify({ 
-                    username, 
-                    password
-                })
+                body: JSON.stringify(body)
             });
             
             const data = await response.json();
@@ -86,18 +128,15 @@ function initLoginPage() {
                 localStorage.setItem('loginTime', new Date().toISOString());
                 window.location.href = '/dashboard.html';
             } else {
-                errorMessage.textContent = data.message;
-                errorMessage.classList.add('show');
-                setTimeout(() => {
-                    errorMessage.classList.remove('show');
-                }, 5000);
+                showLoginError(errorMessage, data.message || 'Falha no login.');
             }
         } catch (error) {
-            errorMessage.textContent = 'Erro ao conectar com o servidor. Tente novamente.';
-            errorMessage.classList.add('show');
-            setTimeout(() => {
-                errorMessage.classList.remove('show');
-            }, 5000);
+            showLoginError(errorMessage, 'Erro ao conectar com o servidor. Tente novamente.');
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Entrar';
+            }
         }
     });
 }
