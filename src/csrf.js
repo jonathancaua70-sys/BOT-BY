@@ -67,18 +67,17 @@ function csrfProtection(req, res, next) {
   }
   
   // Requisições autenticadas por API key não precisam de CSRF
-  // CSRF protege sessões de navegador (cookies), não chamadas máquina-a-máquina
   if (req.headers['x-api-key']) {
     return next();
   }
 
   // Endpoints do cliente C++ (menu) — sem cookie/sessão de browser
-  const p = req.path || '';
+  const full = `${req.baseUrl || ''}${req.path || ''}${req.originalUrl || ''}`.toLowerCase();
   if (
-    p === '/auth/register' ||
-    p === '/auth/client-login' ||
-    p === '/auth/external' ||
-    p === '/validatekey'
+    full.includes('/auth/register') ||
+    full.includes('/auth/client-login') ||
+    full.includes('/auth/external') ||
+    full.includes('/validatekey')
   ) {
     return next();
   }
