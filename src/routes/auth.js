@@ -1058,7 +1058,11 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
   try {
-    const { key, username, password } = req.body || {};
+    let { key, username, password } = req.body || {};
+
+    key = typeof key === 'string' ? key.trim().toUpperCase() : '';
+    username = typeof username === 'string' ? username.trim() : '';
+    password = typeof password === 'string' ? password : '';
 
     if (!key || !username || !password) {
       return res.status(400).json({
@@ -1069,7 +1073,10 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
 
     const keyRegex = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
     if (!keyRegex.test(key)) {
-      return res.status(400).json({ success: false, message: 'Formato de key inválido.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Formato de key inválido. Use XXXX-XXXX-XXXX-XXXX'
+      });
     }
 
     const validation = validateCredentials(username, password);
@@ -1077,8 +1084,9 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
       return res.status(400).json({ success: false, message: validation.message });
     }
 
+    // Nao HTML-escape a key (quebra o match no banco)
     const sanitizedUsername = sanitizeInput(username);
-    const sanitizedKey = sanitizeInput(key);
+    const sanitizedKey = key;
 
     const connection = await pool.getConnection();
     try {
@@ -1113,9 +1121,10 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
 
       const hash = await bcrypt.hash(password, 12);
       const keyInfo = keyRows[0];
-      const isLifetime = !!keyInfo.is_lifetime || keyInfo.duration_days == null;
+      // Lifetime só se flag=1; se duration_days vier null com flag=0, trata como lifetime por segurança
+      const isLifetime = Number(keyInfo.is_lifetime) === 1 || keyInfo.duration_days == null;
       let expiresAt = null;
-      if (!isLifetime && keyInfo.duration_days > 0) {
+      if (!isLifetime && Number(keyInfo.duration_days) > 0) {
         const d = new Date();
         d.setDate(d.getDate() + Number(keyInfo.duration_days));
         expiresAt = d;
@@ -1169,6 +1178,12 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
     console.error('Erro no /auth/register:', err);
     const responseTime = Date.now() - startTime;
     await logBotApi('/api/auth/register', 'POST', ip, false, responseTime);
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(500).json({
+        success: false,
+        message: 'Banco desatualizado. Rode os ALTER do schema.sql.'
+      });
+    }
     return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
   }
 });
