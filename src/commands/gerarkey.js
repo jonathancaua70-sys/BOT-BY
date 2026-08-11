@@ -34,24 +34,52 @@ function gerarKey() {
   return [gerarBloco(), gerarBloco(), gerarBloco(), gerarBloco()].join('-');
 }
 
+function resolveTempo(interaction) {
+  // Preferência: integer (choices numéricas)
+  const asInt = interaction.options.getInteger('tempo');
+  if (asInt !== null && asInt !== undefined) {
+    if (asInt === 0) return { isLifetime: true, durationDays: null };
+    if (Number.isFinite(asInt) && asInt > 0) return { isLifetime: false, durationDays: asInt };
+  }
+
+  // Fallback: string (caso ainda exista comando antigo)
+  const asStr = interaction.options.getString('tempo');
+  if (asStr !== null && asStr !== undefined && String(asStr).trim() !== '') {
+    const raw = String(asStr).trim().toLowerCase();
+    if (raw === 'lifetime' || raw === '0') return { isLifetime: true, durationDays: null };
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0) return { isLifetime: false, durationDays: n };
+  }
+
+  // Fallback: opção "dias" + "lifetime"
+  const life = interaction.options.getBoolean('lifetime');
+  const dias = interaction.options.getInteger('dias');
+  if (life === true) return { isLifetime: true, durationDays: null };
+  if (dias !== null && dias !== undefined && Number.isFinite(dias) && dias > 0) {
+    return { isLifetime: false, durationDays: dias };
+  }
+
+  return null;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('gerarkey')
     .setDescription('Gera uma key com duração (ou lifetime) e salva no banco')
-    .addStringOption((option) =>
+    .addIntegerOption((option) =>
       option
         .setName('tempo')
         .setDescription('Quanto tempo a key/conta vai durar')
         .setRequired(true)
         .addChoices(
-          { name: '1 Dia', value: '1' },
-          { name: '3 Dias', value: '3' },
-          { name: '7 Dias', value: '7' },
-          { name: '15 Dias', value: '15' },
-          { name: '30 Dias', value: '30' },
-          { name: '90 Dias', value: '90' },
-          { name: '365 Dias', value: '365' },
-          { name: 'Lifetime', value: 'lifetime' }
+          { name: '1 Dia', value: 1 },
+          { name: '3 Dias', value: 3 },
+          { name: '7 Dias', value: 7 },
+          { name: '15 Dias', value: 15 },
+          { name: '30 Dias', value: 30 },
+          { name: '90 Dias', value: 90 },
+          { name: '365 Dias', value: 365 },
+          { name: 'Lifetime', value: 0 }
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -59,44 +87,22 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const rawTempo = String(interaction.options.getString('tempo') || '').trim();
-    const tempoMap = {
-      '1': 1,
-      '3': 3,
-      '7': 7,
-      '15': 15,
-      '30': 30,
-      '90': 90,
-      '365': 365,
-      lifetime: null,
-      Lifetime: null
-    };
+    console.log('[gerarkey] options.data =', JSON.stringify(interaction.options.data));
 
-    let isLifetime = false;
-    let durationDays = null;
-
-    if (rawTempo.toLowerCase() === 'lifetime') {
-      isLifetime = true;
-      durationDays = null;
-    } else if (Object.prototype.hasOwnProperty.call(tempoMap, rawTempo)) {
-      durationDays = tempoMap[rawTempo];
-      isLifetime = durationDays === null;
-    } else {
-      const n = Number.parseInt(rawTempo, 10);
-      if (!Number.isFinite(n) || n < 1) {
-        return interaction.editReply(
-          `❌ Tempo inválido (\`${rawTempo || 'vazio'}\`). Rode \`node src/deployCommands.js\` e tente de novo.`
-        );
-      }
-      durationDays = n;
-      isLifetime = false;
+    const resolved = resolveTempo(interaction);
+    if (!resolved) {
+      return interaction.editReply(
+        '❌ Opção **tempo** não chegou no bot.\n' +
+        '1) No PC, na pasta do bot: `node src/deployCommands.js`\n' +
+        '2) No Discord: Ctrl+R (recarregar) ou sair/entrar no server\n' +
+        '3) Digite `/gerarkey` de novo e **escolha** o tempo na lista'
+      );
     }
 
-    // Nunca manda NaN pro MySQL
+    const { isLifetime, durationDays } = resolved;
     if (!isLifetime && !Number.isFinite(durationDays)) {
       return interaction.editReply('❌ Duração inválida. Tente novamente.');
     }
-    if (isLifetime) durationDays = null;
 
     try {
       let key;
