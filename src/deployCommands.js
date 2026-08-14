@@ -54,8 +54,18 @@ function summarize(cmds) {
       console.log(`✅ Servidor atualizado (${guildResult.length} comando(s)):`);
       summarize(guildResult).forEach((line) => console.log('  ' + line));
 
+      const planoCommands = new Set([
+        'gerarkey',
+        'criarusuario',
+        'deletarusuario',
+        'alterarsenha',
+        'resethwid',
+        'listarusuarios',
+      ]);
       const missingPlano = guildResult.filter(
-        (cmd) => !(cmd.options || []).some((o) => o.name === 'plano')
+        (cmd) =>
+          planoCommands.has(cmd.name) &&
+          !(cmd.options || []).some((o) => o.name === 'plano')
       );
       if (missingPlano.length) {
         console.warn(
@@ -63,7 +73,7 @@ function summarize(cmds) {
           missingPlano.map((c) => c.name).join(', ')
         );
       } else {
-        console.log('✅ Todos os comandos no servidor têm a opção plano.');
+        console.log('✅ Comandos de plano estão com a opção plano.');
       }
     } catch (guildErr) {
       if (guildErr.code === 50001) {
