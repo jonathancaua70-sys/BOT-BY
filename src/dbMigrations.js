@@ -1,5 +1,5 @@
 async function ensureColumn(pool, tableName, columnName, columnDefinition) {
-  const safeTable = String(tableName).replace(/[^a-zA-Z0-9_]/g, '');
+  const safeTable = String(tableName).replace(/[^a-zA-Z0-9_-]/g, '');
   const safeColumn = String(columnName).replace(/[^a-zA-Z0-9_]/g, '');
 
   try {
@@ -17,10 +17,17 @@ async function ensureColumn(pool, tableName, columnName, columnDefinition) {
 }
 
 async function migrateKeysTable(pool) {
-  await ensureColumn(pool, 'keys_table', 'is_lifetime', 'TINYINT(1) NOT NULL DEFAULT 0');
-  await ensureColumn(pool, 'keys_table', 'duration_days', 'INT NULL');
-  await ensureColumn(pool, 'keys_table', 'creator_avatar', 'VARCHAR(512) NULL');
-  await ensureColumn(pool, 'keys_table', 'panel_id', 'VARCHAR(50) NULL');
+  const { PANEL_IDS, getKeyTableName } = require('./keyTables');
+
+  for (const panelId of PANEL_IDS) {
+    const tableName = getKeyTableName(panelId);
+    if (!tableName) continue;
+
+    await ensureColumn(pool, tableName, 'is_lifetime', 'TINYINT(1) NOT NULL DEFAULT 0');
+    await ensureColumn(pool, tableName, 'duration_days', 'INT NULL');
+    await ensureColumn(pool, tableName, 'creator_avatar', 'VARCHAR(512) NULL');
+    await ensureColumn(pool, tableName, 'panel_id', 'VARCHAR(50) NULL');
+  }
 }
 
 async function migrateLegacyUsersTable(pool) {

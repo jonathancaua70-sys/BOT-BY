@@ -2,6 +2,7 @@ require('dotenv').config();
 const { pool } = require('../src/db');
 const { PANEL_IDS, getPanelConfig } = require('../src/panels');
 const { ensureAllPanelUserTables } = require('../src/userTables');
+const { ensureAllPanelKeyTables } = require('../src/keyTables');
 const { runDatabaseMigrations } = require('../src/dbMigrations');
 
 const ADMIN_HASH = '$2a$10$s1730vSwly/4s0k9JiLfs.Pijq1wi4rt.rsxgs1CSGTcJCHx1PHN6';
@@ -37,24 +38,11 @@ async function setupDatabase() {
             console.log(`✅ Tabela ${tableName} criada/verificada`);
         }
 
-        // Cria tabela de keys
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS keys_table (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                key_value VARCHAR(50) NOT NULL UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_used BOOLEAN DEFAULT FALSE,
-                used_by VARCHAR(50) NULL,
-                used_at TIMESTAMP NULL,
-                is_lifetime TINYINT(1) NOT NULL DEFAULT 0,
-                duration_days INT NULL,
-                creator_avatar VARCHAR(512) NULL,
-                panel_id VARCHAR(50) NULL,
-                INDEX idx_key (key_value),
-                INDEX idx_used (is_used)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `);
-        console.log('✅ Tabela keys_table criada/verificada');
+        // Tabelas de keys separadas por painel (keys_external-advanced, ...)
+        const keyTables = await ensureAllPanelKeyTables(pool);
+        for (const { tableName } of keyTables) {
+            console.log(`✅ Tabela ${tableName} criada/verificada`);
+        }
 
         await runDatabaseMigrations(pool);
         console.log('✅ Colunas extras verificadas (is_lifetime, duration_days, creator_avatar, panel_id)');
@@ -92,7 +80,10 @@ async function setupDatabase() {
             console.log('✅ Usuário admin criado em users (legado)');
         }
 
-        const [existingKeys] = await pool.query('SELECT COUNT(*) as count FROM keys_table');
+        const sampleKeysTable = 'keys_external-advanced';
+        const [existingKeys] = await pool.query(
+            `SELECT COUNT(*) as count FROM \`${sampleKeysTable}\``
+        );
 
         if (existingKeys[0].count === 0) {
             const sampleKeys = [
@@ -104,11 +95,14 @@ async function setupDatabase() {
             ];
 
             for (const key of sampleKeys) {
-                await pool.query('INSERT INTO keys_table (key_value) VALUES (?)', [key]);
+                await pool.query(
+                    `INSERT INTO \`${sampleKeysTable}\` (key_value, panel_id) VALUES (?, ?)`,
+                    [key, 'external-advanced']
+                );
             }
-            console.log('✅ 5 keys de exemplo criadas');
+            console.log(`✅ 5 keys de exemplo criadas em ${sampleKeysTable}`);
         } else {
-            console.log('ℹ️  Keys já existem no banco');
+            console.log('ℹ️  Keys de exemplo já existem no banco');
         }
 
         console.log('\n📊 Resumo das tabelas de usuários:');
@@ -120,12 +114,22 @@ async function setupDatabase() {
             console.log(`  - ${panel.tableName} (${panel.label}): ${rows[0].total} usuário(s)`);
         }
 
+        console.log('\n📊 Resumo das tabelas de keys:');
+        for (const { panelId, tableName } of keyTables) {
+            const panel = getPanelConfig(panelId);
+            const [rows] = await pool.query(
+                `SELECT COUNT(*) as total FROM \`${tableName}\``
+            );
+            console.log(`  - ${tableName} (${panel.label}): ${rows[0].total} key(s)`);
+        }
+
         const [legacyUsers] = await pool.query('SELECT COUNT(*) as total FROM users');
         console.log(`  - users (legado): ${legacyUsers[0].total} usuário(s)`);
 
         console.log('\n✅ Configuração do banco de dados concluída!');
         console.log('🔐 Login internal-advanced: admin / admin123');
         console.log('📋 Tabelas: users_external_advanced, users_external_premium, users_internal_advanced, users_internal_premium, users_du7');
+        console.log('🔑 Tabelas de keys: keys_external-advanced, keys_external-premium, keys_internal-advanced, keys_internal-premium, keys_du7');
     } catch (error) {
         console.error('❌ Erro ao configurar banco de dados:', error.message);
         throw error;

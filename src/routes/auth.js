@@ -15,6 +15,7 @@ const { generateCaptcha, validateCaptcha } = require('../captcha');
 const { generateMFASecret, enableMFA, disableMFA, isMFAEnabled, validateTOTP, validateBackupCode, generateQRCodeURL, getMFAData } = require('../mfa');
 const { PANEL_IDS, getPanelConfig, getPanelApiKey, isExternalPanel, getUsersTableName, resolvePanelId } = require('../panels');
 const { findUsersByUsername, listUsersFromAllPanels } = require('../userTables');
+const { findKeyAcrossPanels, listKeysFromAllPanels, listKeysForPanel } = require('../keyTables');
 
 // Sistema de logs de segurança
 const securityLogPath = path.join(__dirname, '../../logs/security.log');
@@ -674,12 +675,9 @@ router.post('/validatekey', applyRateLimit('validateKey'), async (req, res) => {
       return res.status(400).json({ success: false, message: 'Formato de key inválido.' });
     }
 
-    const [rows] = await pool.query(
-      'SELECT id FROM keys_table WHERE key_value = ? LIMIT 1',
-      [sanitizedKey]
-    );
+    const keyMatch = await findKeyAcrossPanels(pool, sanitizedKey);
 
-    if (rows.length === 0) {
+    if (!keyMatch) {
       logSecurityEvent('KEY_VALIDATION_INVALID', {
         key: sanitizedKey.substring(0, 8) + '...',
         ip,
@@ -694,6 +692,8 @@ router.post('/validatekey', applyRateLimit('validateKey'), async (req, res) => {
     
     logSecurityEvent('KEY_VALIDATION_SUCCESS', {
       key: sanitizedKey.substring(0, 8) + '...',
+      panel: keyMatch.panelId,
+      table: keyMatch.tableName,
       ip
     });
     
@@ -704,7 +704,7 @@ router.post('/validatekey', applyRateLimit('validateKey'), async (req, res) => {
     const responseTime = Date.now() - startTime;
     await logBotApi('/api/validatekey', 'POST', ip, true, responseTime);
 
-    return res.status(200).json({ success: true, message: 'Key válida.' });
+    return res.status(200).json({ success: true, message: 'Key válida.', panel: keyMatch.panelId });
   } catch (err) {
     console.error('Erro no /validatekey:', err);
     
@@ -911,20 +911,44 @@ router.get('/users', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/keys - listar todas as keys
+// GET /api/keys - listar todas as keys de todos os painéis
 router.get('/keys', requireAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT id, key_value, created_at, is_used, used_by, used_at, is_lifetime, duration_days, panel_id FROM keys_table ORDER BY created_at DESC'
-    );
-    
+    const keys = await listKeysFromAllPanels(pool);
+
     res.json({
       success: true,
-      keys: rows,
-      total: rows.length
+      keys,
+      total: keys.length
     });
   } catch (err) {
     console.error('Erro ao buscar keys:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar keys'
+    });
+  }
+});
+
+// GET /api/keys/:panelId - listar keys de um painel específico
+// Ex.: /api/keys/external-advanced
+router.get('/keys/:panelId', requireAuth, async (req, res) => {
+  try {
+    const panelId = resolvePanelId(req.params.panelId);
+    if (!panelId) {
+      return res.status(404).json({ success: false, message: 'Painel não encontrado.' });
+    }
+
+    const keys = await listKeysForPanel(pool, panelId);
+
+    res.json({
+      success: true,
+      panel: panelId,
+      keys: keys || [],
+      total: keys ? keys.length : 0
+    });
+  } catch (err) {
+    console.error('Erro ao buscar keys do painel:', err);
     res.status(500).json({
       success: false,
       message: 'Erro ao buscar keys'
@@ -1296,13 +1320,20 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
     const sanitizedUsername = sanitizeInput(username);
     const sanitizedKey = key;
 
+    // Localiza em qual tabela de keys (painel) a key está
+    const keyTarget = await findKeyAcrossPanels(pool, sanitizedKey);
+    if (!keyTarget) {
+      logSecurityEvent('REGISTER_INVALID_KEY', { username: sanitizedUsername, ip });
+      return res.status(401).json({ success: false, message: 'Key inválida.' });
+    }
+
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
 
       const [keyRows] = await connection.query(
         `SELECT id, is_used, is_lifetime, duration_days, creator_avatar, panel_id
-         FROM keys_table WHERE key_value = ? LIMIT 1 FOR UPDATE`,
+         FROM \`${keyTarget.tableName}\` WHERE key_value = ? LIMIT 1 FOR UPDATE`,
         [sanitizedKey]
       );
 
@@ -1319,7 +1350,7 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
       }
 
       const keyInfo = keyRows[0];
-      const keyPanel = resolvePanelId(keyInfo.panel_id);
+      const keyPanel = resolvePanelId(keyInfo.panel_id) || keyTarget.panelId;
       const finalPanel = keyPanel || requestedPanel;
       const finalUsersTable = getUsersTableName(finalPanel);
 
@@ -1368,7 +1399,7 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
       );
 
       await connection.query(
-        'UPDATE keys_table SET is_used = TRUE, used_by = ?, used_at = NOW() WHERE id = ?',
+        `UPDATE \`${keyTarget.tableName}\` SET is_used = TRUE, used_by = ?, used_at = NOW() WHERE id = ?`,
         [sanitizedUsername, keyInfo.id]
       );
 

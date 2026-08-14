@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 const { ensureAllPanelUserTables } = require('./userTables');
+const { ensureAllPanelKeyTables } = require('./keyTables');
 const { runDatabaseMigrations } = require('./dbMigrations');
 
 // Pool de conexões: reaproveita conexões em vez de abrir uma nova a cada consulta
@@ -29,8 +30,11 @@ async function testConnection() {
     const tables = await ensureAllPanelUserTables(pool);
     console.log(`✅ Tabelas de painel verificadas (${tables.length}): ${tables.join(', ')}`);
 
+    const keyTables = await ensureAllPanelKeyTables(pool);
+    console.log(`✅ Tabelas de keys verificadas (${keyTables.length}): ${keyTables.map((item) => item.tableName).join(', ')}`);
+
     await runDatabaseMigrations(pool);
-    console.log('✅ Migrações do banco verificadas (keys_table, users)');
+    console.log('✅ Migrações do banco verificadas (keys por painel, users)');
 
     conn.release();
   } catch (err) {

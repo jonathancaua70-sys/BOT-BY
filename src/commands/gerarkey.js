@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const fs = require('fs');
 const path = require('path');
 const { logBotCommand } = require('../webhooks');
+const { getKeyTableName } = require('../keyTables');
 const { applyPlanoChoices, getPlanoFromInteraction, validatePlano, formatPlanoLabel } = require('../discordPanelChoices');
 
 const securityLogPath = path.join(__dirname, '../../logs/security.log');
@@ -114,6 +115,11 @@ module.exports = {
       return interaction.editReply('❌ Duração inválida. Tente novamente.');
     }
 
+    const keysTable = getKeyTableName(panelId);
+    if (!keysTable) {
+      return interaction.editReply('❌ Painel inválido. Tente novamente.');
+    }
+
     try {
       let key;
       let tentativas = 0;
@@ -121,7 +127,7 @@ module.exports = {
       while (tentativas < 5) {
         key = gerarKey();
         const [existente] = await pool.query(
-          'SELECT id FROM keys_table WHERE key_value = ? LIMIT 1',
+          `SELECT id FROM \`${keysTable}\` WHERE key_value = ? LIMIT 1`,
           [key]
         );
         if (existente.length === 0) break;
@@ -138,7 +144,7 @@ module.exports = {
       }
 
       await pool.query(
-        `INSERT INTO keys_table (key_value, is_lifetime, duration_days, creator_avatar, panel_id)
+        `INSERT INTO \`${keysTable}\` (key_value, is_lifetime, duration_days, creator_avatar, panel_id)
          VALUES (?, ?, ?, ?, ?)`,
         [key, isLifetime ? 1 : 0, isLifetime ? null : durationDays, creatorAvatar, panelId]
       );
