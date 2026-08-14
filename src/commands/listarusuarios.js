@@ -7,7 +7,7 @@ const { applyPlanoChoices, getPlanoFromInteraction, formatPlanoLabel } = require
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('listarusuarios')
-    .setDescription('Lista usuários por plano (External/Internal · Advanced/Premium)')
+    .setDescription('Lista usuários por plano (5 planos: External/Internal/DU7)')
     .addStringOption((option) => applyPlanoChoices(option, { required: false }))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 

@@ -41,14 +41,39 @@ async function migrateLegacyUsersTable(pool) {
   }
 }
 
+async function migratePanelUserTables(pool) {
+  const { PANEL_IDS, getUsersTableName } = require('./panels');
+  const columns = [
+    ['created_by', 'VARCHAR(100) NULL'],
+    ['creator_avatar', 'VARCHAR(512) NULL'],
+    ['creator_role', "VARCHAR(50) NULL DEFAULT 'member'"],
+    ['user_avatar', 'VARCHAR(512) NULL'],
+    ['hwid', 'VARCHAR(255) NULL'],
+    ['hwid_history', 'JSON NULL'],
+    ['expires_at', 'DATETIME NULL'],
+    ['is_lifetime', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'],
+  ];
+
+  for (const panelId of PANEL_IDS) {
+    const tableName = getUsersTableName(panelId);
+    if (!tableName) continue;
+    for (const [name, definition] of columns) {
+      await ensureColumn(pool, tableName, name, definition);
+    }
+  }
+}
+
 async function runDatabaseMigrations(pool) {
   await migrateKeysTable(pool);
   await migrateLegacyUsersTable(pool);
+  await migratePanelUserTables(pool);
 }
 
 module.exports = {
   ensureColumn,
   migrateKeysTable,
   migrateLegacyUsersTable,
+  migratePanelUserTables,
   runDatabaseMigrations,
 };

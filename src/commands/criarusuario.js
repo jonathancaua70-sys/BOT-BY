@@ -49,7 +49,7 @@ function validateCredentials(username, password) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('criarusuario')
-    .setDescription('Cria usuário no plano escolhido (External/Internal · Advanced/Premium)')
+    .setDescription('Cria usuário no plano escolhido (5 planos: External/Internal/DU7)')
     .addStringOption((option) =>
       option.setName('usuario').setDescription('Nome de usuário').setRequired(true)
     )

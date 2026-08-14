@@ -28,15 +28,17 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 // Cria uma nova sessão
-function createSession(user, req) {
+function createSession(user, req, extra = {}) {
   const sessionId = generateSessionId();
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const userAgent = req.headers['user-agent'] || 'unknown';
+  const panelId = extra.panelId || user.panel || null;
   
   const session = {
     sessionId,
     userId: user.id,
     username: user.username,
+    panelId,
     ip,
     userAgent,
     createdAt: Date.now(),
@@ -44,8 +46,8 @@ function createSession(user, req) {
     deviceInfo: detectDevice(userAgent)
   };
   
-  // Verifica limite de sessões por usuário
-  const userSessions = getUserSessions(user.id);
+  // Verifica limite de sessões por usuário + plano (ids se repetem entre tabelas)
+  const userSessions = getUserSessions(user.id, panelId);
   if (userSessions.length >= sessionConfig.maxSessionsPerUser) {
     // Remove a sessão mais antiga
     const oldestSession = userSessions.sort((a, b) => a.createdAt - b.createdAt)[0];
@@ -60,7 +62,8 @@ function createSession(user, req) {
     { 
       sessionId, 
       userId: user.id, 
-      username: user.username 
+      username: user.username,
+      panelId
     },
     process.env.JWT_SECRET,
     { expiresIn: '12h' }
@@ -90,14 +93,14 @@ function getSession(sessionId) {
   return session;
 }
 
-// Obtém todas as sessões de um usuário
-function getUserSessions(userId) {
+// Obtém todas as sessões de um usuário (opcionalmente no mesmo plano)
+function getUserSessions(userId, panelId) {
   const sessions = [];
   
-  for (const [sessionId, session] of sessionStore.entries()) {
-    if (session.userId === userId) {
-      sessions.push(session);
-    }
+  for (const session of sessionStore.values()) {
+    if (session.userId !== userId) continue;
+    if (panelId != null && session.panelId != null && session.panelId !== panelId) continue;
+    sessions.push(session);
   }
   
   return sessions.sort((a, b) => b.lastActivity - a.lastActivity);

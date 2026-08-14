@@ -32,7 +32,7 @@ function sanitizeInput(input) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('deletarusuario')
-    .setDescription('Remove usuário do plano escolhido (External/Internal · Advanced/Premium)')
+    .setDescription('Remove usuário do plano escolhido (5 planos: External/Internal/DU7)')
     .addStringOption((option) =>
       option.setName('usuario').setDescription('Nome de usuário a remover').setRequired(true)
     )

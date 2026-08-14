@@ -101,6 +101,21 @@ function resolvePanelId(panelId) {
   return null;
 }
 
+function getAllPanelTables() {
+  return PANEL_IDS.map((id) => {
+    const panel = getPanelConfig(id);
+    return {
+      id: panel.id,
+      label: panel.label,
+      type: panel.type,
+      tier: panel.tier,
+      tableName: panel.tableName,
+      loginPath: `/login/${panel.id}`,
+      apiLoginPath: `/api/login/${panel.id}`,
+    };
+  });
+}
+
 module.exports = {
   PANEL_IDS,
   PANELS,
@@ -111,4 +126,5 @@ module.exports = {
   isExternalPanel,
   getUsersTableName,
   resolvePanelId,
+  getAllPanelTables,
 };

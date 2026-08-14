@@ -14,6 +14,7 @@ const { recordAuthMetric, recordAPIMetric, recordSystemMetric, generateSecurityR
 const { generateCaptcha, validateCaptcha } = require('../captcha');
 const { generateMFASecret, enableMFA, disableMFA, isMFAEnabled, validateTOTP, validateBackupCode, generateQRCodeURL, getMFAData } = require('../mfa');
 const { PANEL_IDS, getPanelConfig, getPanelApiKey, isExternalPanel, getUsersTableName, resolvePanelId } = require('../panels');
+const { findUsersByUsername, listUsersFromAllPanels } = require('../userTables');
 
 // Sistema de logs de segurança
 const securityLogPath = path.join(__dirname, '../../logs/security.log');
@@ -358,7 +359,7 @@ async function handlePanelLogin(req, res, panelId) {
       });
     }
 
-    const sessionData = createSession(user, req);
+    const sessionData = createSession(user, req, { panelId });
 
     res.cookie('session', sessionData.token, {
       httpOnly: true,
@@ -424,8 +425,9 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   
   try {
-    const { username, password, captchaId, captchaAnswer } = req.body;
+    const { username, password, captchaId, captchaAnswer, panel, panelId } = req.body || {};
     const apiKey = req.headers['x-api-key'];
+    const requestedPanel = resolvePanelId(panel || panelId || req.headers['x-panel-id']);
     
     // Verifica se é requisição externa (API key)
     const isExternalRequest = apiKey === process.env.EXTERNAL_API_KEY;
@@ -463,7 +465,8 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
         });
       }
     } else {
-      console.log(`[LOGIN] 🔑 Requisição externa via API key - "${username}" (IP: ${ip})`);
+      const panelHint = requestedPanel ? ` plano=${requestedPanel}` : ' (busca nos 5 planos)';
+      console.log(`[LOGIN] 🔑 Requisição externa via API key - "${username}"${panelHint} (IP: ${ip})`);
     }
 
     // Valida e sanitiza as credenciais
@@ -501,34 +504,26 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
     
     const sanitizedUsername = sanitizeInput(username);
 
-    const [rows] = await pool.query(
-      'SELECT id, username, password, user_avatar FROM users WHERE username = ? LIMIT 1',
-      [sanitizedUsername]
-    );
+    const matches = await findUsersByUsername(pool, sanitizedUsername, requestedPanel);
+    let matched = null;
 
-    const user = rows[0];
+    if (matches.length === 0) {
+      await bcrypt.compare(password, DUMMY_HASH);
+    } else {
+      for (const candidate of matches) {
+        const ok = await bcrypt.compare(password, candidate.user.password);
+        if (ok) {
+          matched = candidate;
+          break;
+        }
+      }
+    }
 
-    // Sempre roda o bcrypt.compare, mesmo se o usuário não existir, comparando
-    // contra um hash fantasma. Isso mantém o tempo de resposta parecido nos
-    // dois casos e evita enumeração de usernames por timing attack.
-    const senhaCorreta = await bcrypt.compare(password, user ? user.password : DUMMY_HASH);
-    
-    // Se o hash estiver usando cost 10 (legado), registra para rehash
+    const user = matched?.user || null;
+    const senhaCorreta = !!matched;
+
     if (user && senhaCorreta && user.password.startsWith('$2a$10$')) {
       console.log(`[LOGIN] ⚠️ Usuário ${sanitizedUsername} usando hash legado (cost 10) - deve ser rehashado para cost 12`);
-      // Aqui você poderia implementar rehash automático em um cenário real
-    }
-    
-    // Se o hash estiver usando cost 10 (legado), verifica com cost 10 também
-    // para compatibilidade com usuários existentes
-    let senhaCorretaLegado = false;
-    if (user && user.password.startsWith('$2a$10$')) {
-      senhaCorretaLegado = await bcrypt.compare(password, user.password);
-    }
-    
-    if (!senhaCorreta && senhaCorretaLegado) {
-      // Se funcionou com cost 10, registra que usuário precisa de rehash
-      console.log(`[LOGIN] ⚠️ Usuário ${sanitizedUsername} usando hash legado (cost 10)`);
     }
 
     if (!user || !senhaCorreta) {
@@ -538,10 +533,10 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
         username: sanitizedUsername,
         ip,
         reason,
-        userExists: !!user
+        userExists: !!user,
+        panel: requestedPanel || null,
       });
       
-      // Se não existe o usuário, pode ser tentativa de enumeração
       if (!user) {
         await logAttack('User Enumeration Attempt', ip, {
           attemptedUsername: sanitizedUsername
@@ -552,8 +547,11 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
       return res.status(401).json({ success: false, message: 'Usuário ou senha incorretos.' });
     }
 
+    const resolvedPanelId = matched.panelId;
+    const panelConfig = matched.panel;
+
     // Login aprovado! Cria sessão avançada
-    const sessionData = createSession(user, req);
+    const sessionData = createSession(user, req, { panelId: resolvedPanelId });
     
     res.cookie('session', sessionData.token, {
       httpOnly: true,
@@ -562,18 +560,18 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
       maxAge: 12 * 60 * 60 * 1000,
     });
 
-    console.log(`[LOGIN] ✅ Sucesso - "${sanitizedUsername}" logou (IP: ${ip})`);
+    console.log(`[LOGIN] ✅ Sucesso - "${sanitizedUsername}" logou (plano: ${resolvedPanelId || 'legado'}, tabela: ${matched.tableName}) (IP: ${ip})`);
     logSecurityEvent('LOGIN_SUCCESS', {
       username: sanitizedUsername,
       ip,
-      userId: user.id
+      userId: user.id,
+      panel: resolvedPanelId,
+      table: matched.tableName,
     });
     await notifyWebhook({ username: sanitizedUsername, success: true, ip });
     
-    // Registra métrica de segurança
-    recordAuthMetric('login_success', { userId: user.id, ip });
+    recordAuthMetric('login_success', { userId: user.id, ip, panelId: resolvedPanelId });
 
-    // Loga acesso à API
     const responseTime = Date.now() - startTime;
     await logBotApi('/api/login', 'POST', ip, true, responseTime);
 
@@ -583,7 +581,10 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
       user: { 
         id: user.id, 
         username: user.username,
-        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'
+        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png',
+        panel: resolvedPanelId,
+        panel_type: panelConfig?.type || null,
+        tier: panelConfig?.tier || null,
       },
     });
   } catch (err) {
@@ -602,8 +603,15 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
 // O dashboard deve chamar isso ao carregar, em vez de confiar no localStorage.
 router.get('/me', requireAuth, async (req, res) => {
   try {
+    const panelId = req.user.panelId || req.session?.panelId || null;
+    const usersTable = panelId ? getUsersTableName(panelId) : 'users';
+
+    if (!usersTable) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
     const [rows] = await pool.query(
-      'SELECT id, username, user_avatar FROM users WHERE id = ? LIMIT 1',
+      `SELECT id, username, user_avatar FROM \`${usersTable}\` WHERE id = ? LIMIT 1`,
       [req.user.id]
     );
     
@@ -617,7 +625,8 @@ router.get('/me', requireAuth, async (req, res) => {
       user: { 
         id: user.id, 
         username: user.username,
-        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'
+        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png',
+        panel: panelId,
       } 
     });
   } catch (err) {
@@ -886,14 +895,12 @@ router.get('/logs', requireAuth, async (req, res) => {
 // GET /api/users - listar todos os usuários
 router.get('/users', requireAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT id, username, created_by, created_at, creator_avatar, creator_role, user_avatar FROM users ORDER BY created_at DESC'
-    );
+    const users = await listUsersFromAllPanels(pool);
     
     res.json({
       success: true,
-      users: rows,
-      total: rows.length
+      users,
+      total: users.length
     });
   } catch (err) {
     console.error('Erro ao buscar usuários:', err);
@@ -908,7 +915,7 @@ router.get('/users', requireAuth, async (req, res) => {
 router.get('/keys', requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT id, key_value, created_at, is_used, used_by, used_at FROM keys_table ORDER BY created_at DESC'
+      'SELECT id, key_value, created_at, is_used, used_by, used_at, is_lifetime, duration_days, panel_id FROM keys_table ORDER BY created_at DESC'
     );
     
     res.json({
@@ -1149,8 +1156,9 @@ router.post('/auth/external', applyRateLimit('external'), async (req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   
   try {
-    const { username, password } = req.body;
+    const { username, password, panel, panelId } = req.body || {};
     const apiKey = req.headers['x-api-key'];
+    const requestedPanel = resolvePanelId(panel || panelId || req.headers['x-panel-id']);
     
     // Valida API key
     const EXTERNAL_API_KEY = process.env.EXTERNAL_API_KEY;
@@ -1176,16 +1184,24 @@ router.post('/auth/external', applyRateLimit('external'), async (req, res) => {
     }
     
     const sanitizedUsername = sanitizeInput(username);
-    
-    const [rows] = await pool.query(
-      'SELECT id, username, password, user_avatar FROM users WHERE username = ? LIMIT 1',
-      [sanitizedUsername]
-    );
-    
-    const user = rows[0];
-    
-    // Verifica senha (com timing attack protection)
-    const senhaCorreta = await bcrypt.compare(password, user ? user.password : DUMMY_HASH);
+
+    const matches = await findUsersByUsername(pool, sanitizedUsername, requestedPanel);
+    let matched = null;
+
+    if (matches.length === 0) {
+      await bcrypt.compare(password, DUMMY_HASH);
+    } else {
+      for (const candidate of matches) {
+        const ok = await bcrypt.compare(password, candidate.user.password);
+        if (ok) {
+          matched = candidate;
+          break;
+        }
+      }
+    }
+
+    const user = matched?.user || null;
+    const senhaCorreta = !!matched;
     
     if (!user || !senhaCorreta) {
       const reason = !user ? 'Usuário não encontrado' : 'Senha incorreta';
@@ -1194,23 +1210,25 @@ router.post('/auth/external', applyRateLimit('external'), async (req, res) => {
         username: sanitizedUsername,
         ip,
         reason,
-        userExists: !!user
+        userExists: !!user,
+        panel: requestedPanel || null,
       });
       
       await logApiLogin(sanitizedUsername, false, ip, reason);
       return res.status(401).json({ success: false, message: 'Usuário ou senha incorretos.' });
     }
     
-    // Login externo aprovado
-    console.log(`[EXTERNAL_AUTH] ✅ Sucesso - "${sanitizedUsername}" (IP: ${ip})`);
+    console.log(`[EXTERNAL_AUTH] ✅ Sucesso - "${sanitizedUsername}" (plano: ${matched.panelId || 'legado'}, tabela: ${matched.tableName}) (IP: ${ip})`);
     logSecurityEvent('EXTERNAL_AUTH_SUCCESS', {
       username: sanitizedUsername,
       ip,
-      userId: user.id
+      userId: user.id,
+      panel: matched.panelId,
+      table: matched.tableName,
     });
     
     await logApiLogin(sanitizedUsername, true, ip, 'External auth successful');
-    recordAuthMetric('external_auth_success', { userId: user.id, ip });
+    recordAuthMetric('external_auth_success', { userId: user.id, ip, panelId: matched.panelId });
     
     const responseTime = Date.now() - startTime;
     await logBotApi('/api/auth/external', 'POST', ip, true, responseTime);
@@ -1221,7 +1239,10 @@ router.post('/auth/external', applyRateLimit('external'), async (req, res) => {
       user: {
         id: user.id,
         username: user.username,
-        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'
+        user_avatar: user.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png',
+        panel: matched.panelId,
+        panel_type: matched.panel?.type || null,
+        tier: matched.panel?.tier || null,
       }
     });
   } catch (err) {
@@ -1353,7 +1374,12 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
 
       await connection.commit();
 
-      logSecurityEvent('REGISTER_SUCCESS', { username: sanitizedUsername, ip });
+      logSecurityEvent('REGISTER_SUCCESS', {
+        username: sanitizedUsername,
+        ip,
+        panel: finalPanel,
+        table: finalUsersTable,
+      });
       await logApiLogin(sanitizedUsername, true, ip, 'register');
 
       const responseTime = Date.now() - startTime;
@@ -1393,12 +1419,7 @@ router.post('/auth/client-login', applyRateLimit('external'), async (req, res) =
 
   try {
     const { username, password, hwid, panel, panelId } = req.body || {};
-    const requestedPanel = resolvePanelId(panel || panelId) || 'external-advanced';
-    const usersTable = getUsersTableName(requestedPanel);
-
-    if (!usersTable) {
-      return res.status(400).json({ success: false, message: 'Painel inválido.' });
-    }
+    const requestedPanel = resolvePanelId(panel || panelId || req.headers['x-panel-id']);
 
     if (!username || !password) {
       return res.status(400).json({ success: false, message: 'Usuário e senha são obrigatórios.' });
@@ -1416,20 +1437,32 @@ router.post('/auth/client-login', applyRateLimit('external'), async (req, res) =
     const sanitizedUsername = sanitizeInput(username);
     const sanitizedHwid = sanitizeInput(hwid).substring(0, 255);
 
-    const [rows] = await pool.query(
-      `SELECT id, username, password, user_avatar, creator_avatar, hwid, hwid_history, expires_at, is_lifetime
-       FROM \`${usersTable}\` WHERE username = ? LIMIT 1`,
-      [sanitizedUsername]
-    );
+    const matches = await findUsersByUsername(pool, sanitizedUsername, requestedPanel);
+    let matched = null;
 
-    const user = rows[0];
-    const senhaCorreta = await bcrypt.compare(password, user ? user.password : DUMMY_HASH);
+    if (matches.length === 0) {
+      await bcrypt.compare(password, DUMMY_HASH);
+    } else {
+      for (const candidate of matches) {
+        const ok = await bcrypt.compare(password, candidate.user.password);
+        if (ok) {
+          matched = candidate;
+          break;
+        }
+      }
+    }
+
+    const user = matched?.user || null;
+    const senhaCorreta = !!matched;
+    const usersTable = matched?.tableName;
+    const finalPanel = matched?.panelId || requestedPanel;
 
     if (!user || !senhaCorreta) {
       logSecurityEvent('CLIENT_LOGIN_FAILED', {
         username: sanitizedUsername,
         ip,
-        userExists: !!user
+        userExists: !!user,
+        panel: requestedPanel || null,
       });
       await logApiLogin(sanitizedUsername, false, ip, 'client-login');
       return res.status(401).json({ success: false, message: 'Usuário ou senha incorretos.' });
@@ -1513,6 +1546,8 @@ router.post('/auth/client-login', applyRateLimit('external'), async (req, res) =
       username: sanitizedUsername,
       ip,
       userId: user.id,
+      panel: finalPanel,
+      table: usersTable,
       hwid: sanitizedHwid.substring(0, 24) + '...'
     });
     await logApiLogin(sanitizedUsername, true, ip, 'client-login');
@@ -1532,7 +1567,7 @@ router.post('/auth/client-login', applyRateLimit('external'), async (req, res) =
         expires_at: isLifetime ? null : planLabel,
         plan: planLabel,
         is_lifetime: isLifetime,
-        panel: requestedPanel,
+        panel: finalPanel,
       }
     });
   } catch (err) {

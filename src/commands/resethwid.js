@@ -33,7 +33,7 @@ function sanitizeInput(input) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('resethwid')
-    .setDescription('Reseta HWID de usuário no plano External (Advanced/Premium)')
+    .setDescription('Reseta HWID de usuário no plano externo (Advanced/Premium/DU7)')
     .addStringOption((option) =>
       option.setName('usuario').setDescription('Nome de usuário no menu').setRequired(true)
     )

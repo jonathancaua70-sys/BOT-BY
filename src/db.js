@@ -27,7 +27,7 @@ async function testConnection() {
     console.log('✅ Conectado ao MySQL (Aiven) com sucesso!');
 
     const tables = await ensureAllPanelUserTables(pool);
-    console.log(`✅ Tabelas de painel verificadas: ${tables.join(', ')}`);
+    console.log(`✅ Tabelas de painel verificadas (${tables.length}): ${tables.join(', ')}`);
 
     await runDatabaseMigrations(pool);
     console.log('✅ Migrações do banco verificadas (keys_table, users)');

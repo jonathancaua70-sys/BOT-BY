@@ -6,7 +6,7 @@ const cookieParser = require('cookie-parser');
 
 const { testConnection } = require('./db');
 const authRoutes = require('./routes/auth');
-const { PANEL_IDS } = require('./panels');
+const { PANEL_IDS, getAllPanelTables } = require('./panels');
 const discordClient = require('./discordClient');
 const { logSiteAccess, logSystemError } = require('./webhooks');
 const { provideCSRFToken, csrfProtection } = require('./csrf');
@@ -186,6 +186,11 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🌐 API rodando na porta ${PORT}`);
   console.log(`📱 Painel web disponível em http://localhost:${PORT}`);
+  console.log('📦 5 planos / 5 tabelas de usuários:');
+  for (const panel of getAllPanelTables()) {
+    console.log(`   ${panel.label} (${panel.id}) → ${panel.tableName}`);
+    console.log(`      web: ${panel.loginPath} | api: ${panel.apiLoginPath}`);
+  }
 });
 
 // Middleware de captura de erros global
