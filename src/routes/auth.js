@@ -300,7 +300,7 @@ async function handlePanelLogin(req, res, panelId) {
       tier: panel.tier,
     };
 
-    if (externalPanel && isExternalRequest) {
+    if (isExternalRequest) {
       console.log(`${logPrefix} ✅ Sucesso - "${sanitizedUsername}" (IP: ${ip})`);
       logSecurityEvent('PANEL_LOGIN_SUCCESS', {
         panelId,
