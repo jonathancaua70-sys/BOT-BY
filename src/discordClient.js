@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
 const { startBotPresence } = require('./botPresence');
-const { handleHookTrickButton, handleHookTrickSelect } = require('./hookTrickBuy');
 
 const client = new Client({
   intents: [
@@ -44,33 +43,21 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const command = interaction.client.commands.get(interaction.commandName);
+  if (!command) return;
+
   try {
-    if (interaction.isButton() && String(interaction.customId || '').startsWith('hooktrick_')) {
-      await handleHookTrickButton(interaction);
-      return;
-    }
-
-    if (interaction.isStringSelectMenu() && String(interaction.customId || '').startsWith('hooktrick_')) {
-      await handleHookTrickSelect(interaction);
-      return;
-    }
-
-    if (!interaction.isChatInputCommand()) return;
-
-    const command = interaction.client.commands.get(interaction.commandName);
-    if (!command) return;
-
     await command.execute(interaction);
   } catch (err) {
-    console.error(`Erro na interação:`, err);
-    const errorMsg = { content: '❌ Ocorreu um erro ao executar isso.', flags: 64 };
-    try {
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(errorMsg);
-      } else if (interaction.isRepliable()) {
-        await interaction.reply(errorMsg);
-      }
-    } catch (_) {}
+    console.error(`Erro ao executar /${interaction.commandName}:`, err);
+    const errorMsg = { content: '❌ Ocorreu um erro ao executar esse comando.', flags: 64 };
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp(errorMsg);
+    } else {
+      await interaction.reply(errorMsg);
+    }
   }
 });
 
