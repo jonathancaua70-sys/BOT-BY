@@ -1277,11 +1277,12 @@ router.post('/auth/external', applyRateLimit('external'), async (req, res) => {
   }
 });
 
-// POST /api/auth/register
-// Body: { "key": "...", "username": "...", "password": "...", "panel": "external-advanced" }
-router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
+async function handleRegister(req, res, forcedPanelId = null) {
   const startTime = Date.now();
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const routeLabel = forcedPanelId
+    ? `/api/auth/register/${forcedPanelId}`
+    : '/api/auth/register';
 
   try {
     let { key, username, password, panel, panelId } = req.body || {};
@@ -1289,7 +1290,7 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
     key = typeof key === 'string' ? key.trim().toUpperCase() : '';
     username = typeof username === 'string' ? username.trim() : '';
     password = typeof password === 'string' ? password : '';
-    const requestedPanel = resolvePanelId(panel || panelId) || 'external-advanced';
+    const requestedPanel = resolvePanelId(forcedPanelId || panel || panelId) || 'external-advanced';
     const usersTable = getUsersTableName(requestedPanel);
 
     if (!usersTable) {
@@ -1351,12 +1352,20 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
 
       const keyInfo = keyRows[0];
       const keyPanel = resolvePanelId(keyInfo.panel_id) || keyTarget.panelId;
-      const finalPanel = keyPanel || requestedPanel;
+      const finalPanel = forcedPanelId || keyPanel || requestedPanel;
       const finalUsersTable = getUsersTableName(finalPanel);
 
       if (!finalUsersTable) {
         await connection.rollback();
         return res.status(400).json({ success: false, message: 'Painel da key inválido.' });
+      }
+
+      if (forcedPanelId && keyPanel && keyPanel !== forcedPanelId) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Essa key é do painel ${keyPanel}, não de ${forcedPanelId}.`
+        });
       }
 
       const [existentes] = await connection.query(
@@ -1414,7 +1423,7 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
       await logApiLogin(sanitizedUsername, true, ip, 'register');
 
       const responseTime = Date.now() - startTime;
-      await logBotApi('/api/auth/register', 'POST', ip, true, responseTime);
+      await logBotApi(routeLabel, 'POST', ip, true, responseTime);
 
       return res.status(201).json({
         success: true,
@@ -1428,9 +1437,9 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
       connection.release();
     }
   } catch (err) {
-    console.error('Erro no /auth/register:', err);
+    console.error(`Erro no ${routeLabel}:`, err);
     const responseTime = Date.now() - startTime;
-    await logBotApi('/api/auth/register', 'POST', ip, false, responseTime);
+    await logBotApi(routeLabel, 'POST', ip, false, responseTime);
     if (err && err.code === 'ER_BAD_FIELD_ERROR') {
       return res.status(500).json({
         success: false,
@@ -1439,6 +1448,17 @@ router.post('/auth/register', applyRateLimit('register'), async (req, res) => {
     }
     return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
   }
+}
+
+router.post('/auth/register', applyRateLimit('register'), (req, res) => handleRegister(req, res));
+
+PANEL_IDS.forEach((panelId) => {
+  router.post(`/auth/register/${panelId}`, applyRateLimit('register'), (req, res) => {
+    return handleRegister(req, res, panelId);
+  });
+  router.post(`/register/${panelId}`, applyRateLimit('register'), (req, res) => {
+    return handleRegister(req, res, panelId);
+  });
 });
 
 // POST /api/auth/client-login
