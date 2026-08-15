@@ -4,12 +4,17 @@ const {
   SlashCommandBuilder,
   PermissionFlagsBits,
   MessageFlags,
-  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
   AttachmentBuilder,
+  ContainerBuilder,
+  TextDisplayBuilder,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
+  SeparatorBuilder,
+  SeparatorSpacingSize,
 } = require('discord.js');
 const { logBotCommand } = require('../webhooks');
 const { loadShopConfig, saveShopConfig, isHttpUrl } = require('../hookTrickShop');
@@ -17,33 +22,51 @@ const { loadShopConfig, saveShopConfig, isHttpUrl } = require('../hookTrickShop'
 const BANNER_PATH = path.join(__dirname, '../../assets/hooktrick-banner.png');
 const BANNER_FULL_PATH = path.join(__dirname, '../../assets/hooktrick-banner-full.png');
 
-function buildShopEmbed(imageUrl) {
-  return new EmbedBuilder()
-    .setColor(0x111111)
-    .setTitle('Hook Trick')
-    .setDescription(
-      [
-        '• Menu com uma interface moderna',
-        '• Compatibilidade Total',
-        '• Menu totalmente otimizado',
-        '',
-        '**ESP PERFEITO**',
-        'Veja todos os jogadores através das paredes, itens e veículos com um sistema ultra-otimizado.',
-        '',
-        '**AIMBOT INTELIGENTE**',
-        'Mira ajustável por distância, suavidade e prioridade (cabeça/peito).',
-        '',
-        '**COMPATIBILIDADE TOTAL**',
-        'Funciona em todos os emuladores (Bluestacks, MSI 4/5, P64, N32).',
-        '',
-        '**SEM RISCO**',
-        'Código atualizado para manter o menu estável.',
-        '',
-        'Não perca tempo! Compre agora e seja o mais temido do servidor.',
-      ].join('\n')
+function buildShopContainer(imageUrl, shopUrl) {
+  return new ContainerBuilder()
+    .setAccentColor(0xffffff)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        [
+          '# Hook Trick',
+          '• Menu com uma interface moderna',
+          '• Compatibilidade Total',
+          '• Menu totalmente otimizado',
+          '',
+          '**ESP PERFEITO**',
+          'Veja todos os jogadores através das paredes, itens e veículos com um sistema ultra-otimizado.',
+          '',
+          '**AIMBOT INTELIGENTE**',
+          'Mira ajustável por distância, suavidade e prioridade (cabeça/peito).',
+          '',
+          '**COMPATIBILIDADE TOTAL**',
+          'Funciona em todos os emuladores (Bluestacks, MSI 4/5, P64, N32).',
+          '',
+          '**SEM RISCO**',
+          'Código atualizado para manter o menu estável.',
+          '',
+          'Não perca tempo! Compre agora e seja o mais temido do servidor.',
+        ].join('\n')
+      )
     )
-    .setImage(imageUrl)
-    .setFooter({ text: "Clique no botão 'Comprar'" });
+    .addSeparatorComponents(
+      new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small)
+    )
+    .addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(imageUrl))
+    )
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent("-# Clique no botão **Comprar**")
+    )
+    .addActionRowComponents(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('Comprar')
+          .setEmoji('🛒')
+          .setStyle(ButtonStyle.Link)
+          .setURL(shopUrl)
+      )
+    );
 }
 
 module.exports = {
@@ -53,7 +76,7 @@ module.exports = {
     .addSubcommand((sub) =>
       sub
         .setName('configure')
-        .setDescription('Configura o link da loja e envia o embed com o botão Comprar')
+        .setDescription('Configura o link da loja e envia o painel (Components V2)')
         .addStringOption((option) =>
           option
             .setName('link')
@@ -70,7 +93,7 @@ module.exports = {
         .addStringOption((option) =>
           option
             .setName('imagem')
-            .setDescription('Link da imagem do embed (opcional)')
+            .setDescription('Link da imagem do painel (opcional)')
             .setRequired(false)
         )
     )
@@ -120,31 +143,23 @@ module.exports = {
     });
 
     const files = [];
-    let embedImage = imageUrlOption || loadShopConfig().imageUrl;
+    let imageUrl = imageUrlOption || loadShopConfig().imageUrl;
 
-    if (!embedImage) {
+    if (!imageUrl) {
       const bannerFile = fs.existsSync(BANNER_PATH) ? BANNER_PATH : BANNER_FULL_PATH;
       if (fs.existsSync(bannerFile)) {
         files.push(new AttachmentBuilder(bannerFile, { name: 'hooktrick-banner.png' }));
-        embedImage = 'attachment://hooktrick-banner.png';
+        imageUrl = 'attachment://hooktrick-banner.png';
       }
     }
 
-    if (!embedImage) {
-      embedImage = interaction.client.user.displayAvatarURL({ size: 512, extension: 'png' });
+    if (!imageUrl) {
+      imageUrl = interaction.client.user.displayAvatarURL({ size: 512, extension: 'png' });
     }
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel('Comprar')
-        .setEmoji('🛒')
-        .setStyle(ButtonStyle.Link)
-        .setURL(shopUrl)
-    );
-
     await channel.send({
-      embeds: [buildShopEmbed(embedImage)],
-      components: [row],
+      flags: MessageFlags.IsComponentsV2,
+      components: [buildShopContainer(imageUrl, shopUrl)],
       files,
     });
 
@@ -157,7 +172,7 @@ module.exports = {
     );
 
     return interaction.editReply(
-      `✅ Loja **Hook Trick** enviada em ${channel}.\n🛒 Comprar: ${shopUrl}`
+      `✅ Loja **Hook Trick** (Components V2, barra branca) enviada em ${channel}.\n🛒 Comprar: ${shopUrl}`
     );
   },
 };
