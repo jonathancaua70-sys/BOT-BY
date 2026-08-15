@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { PANEL_IDS, isExternalPanel } = require('./panels');
+const { PANEL_IDS } = require('./panels');
 
 // Store para CSRF tokens (em memória - em produção usar Redis)
 const csrfStore = new Map();
@@ -75,11 +75,12 @@ function csrfProtection(req, res, next) {
   // Endpoints do cliente C++ (menu) — sem cookie/sessão de browser
   const full = `${req.baseUrl || ''}${req.path || ''}${req.originalUrl || ''}`.toLowerCase();
   const skipCsrfPaths = [
+    '/register',
     '/auth/register',
     '/auth/client-login',
     '/auth/external',
     '/validatekey',
-    ...PANEL_IDS.filter(isExternalPanel).map((id) => `/login/${id}`),
+    ...PANEL_IDS.map((id) => `/login/${id}`),
   ];
 
   if (skipCsrfPaths.some((path) => full.includes(path))) {
