@@ -11,9 +11,8 @@ const { applyRateLimit, createUserRateLimit } = require('../rateLimiter');
 const { requireIPWhitelist } = require('../ipWhitelist');
 const { createSession, getSession, invalidateSession, listAllSessions, detectSuspiciousSessions } = require('../sessionManager');
 const { recordAuthMetric, recordAPIMetric, recordSystemMetric, generateSecurityReport } = require('../securityMonitor');
-const { generateCaptcha, validateCaptcha } = require('../captcha');
 const { generateMFASecret, enableMFA, disableMFA, isMFAEnabled, validateTOTP, validateBackupCode, generateQRCodeURL, getMFAData } = require('../mfa');
-const { PANEL_IDS, getPanelConfig, getPanelApiKey, isExternalPanel, getUsersTableName, resolvePanelId } = require('../panels');
+const { PANEL_IDS, getPanelConfig, getPanelApiKey, getUsersTableName, resolvePanelId } = require('../panels');
 const { findUsersByUsername, listUsersFromAllPanels } = require('../userTables');
 const { findKeyAcrossPanels, listKeysFromAllPanels, listKeysForPanel } = require('../keyTables');
 
@@ -223,18 +222,7 @@ function requireAuth(req, res, next) {
 
 // GET /api/captcha - Gera um novo CAPTCHA
 router.get('/captcha', (req, res) => {
-  try {
-    const captcha = generateCaptcha();
-    return res.status(200).json({
-      success: true,
-      captchaId: captcha.captchaId,
-      question: captcha.question,
-      expiresAt: captcha.expiresAt
-    });
-  } catch (err) {
-    console.error('Erro no /captcha:', err);
-    return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
-  }
+  return res.json({ success: true, required: false, message: 'CAPTCHA desativado.' });
 });
 
 // Login por painel: external-advanced, external-premium, internal-advanced, internal-premium
@@ -251,38 +239,12 @@ async function handlePanelLogin(req, res, panelId) {
   const logPrefix = `[LOGIN/${panelId.toUpperCase()}]`;
 
   try {
-    const { username, password, captchaId, captchaAnswer } = req.body;
+    const { username, password } = req.body;
     const apiKey = req.headers['x-api-key'];
     const expectedApiKey = getPanelApiKey(panelId);
     const isExternalRequest = expectedApiKey && apiKey === expectedApiKey;
-    const externalPanel = isExternalPanel(panelId);
 
-    if ((!externalPanel || !isExternalRequest) && !isExternalRequest) {
-      if (!captchaId || !captchaAnswer) {
-        logSecurityEvent('PANEL_LOGIN_CAPTCHA_MISSING', { panelId, username, ip });
-        return res.status(400).json({
-          success: false,
-          message: 'CAPTCHA é obrigatório.',
-          requireCaptcha: true,
-        });
-      }
-
-      const captchaValidation = validateCaptcha(captchaId, captchaAnswer);
-      if (!captchaValidation.valid) {
-        logSecurityEvent('PANEL_LOGIN_CAPTCHA_INVALID', {
-          panelId,
-          username,
-          ip,
-          reason: captchaValidation.reason,
-        });
-        return res.status(400).json({
-          success: false,
-          message: captchaValidation.reason,
-          requireCaptcha: true,
-          attemptsRemaining: captchaValidation.attemptsRemaining,
-        });
-      }
-    } else if (isExternalRequest) {
+    if (isExternalRequest) {
       console.log(`${logPrefix} 🔑 Requisição via API key (IP: ${ip})`);
     }
 
@@ -426,46 +388,13 @@ router.post('/login', applyRateLimit('login'), async (req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   
   try {
-    const { username, password, captchaId, captchaAnswer, panel, panelId } = req.body || {};
+    const { username, password, panel, panelId } = req.body || {};
     const apiKey = req.headers['x-api-key'];
     const requestedPanel = resolvePanelId(panel || panelId || req.headers['x-panel-id']);
     
-    // Verifica se é requisição externa (API key)
     const isExternalRequest = apiKey === process.env.EXTERNAL_API_KEY;
-    
-    // Pula CAPTCHA para requisições externas autenticadas por API key
-    if (!isExternalRequest) {
-      // Valida CAPTCHA
-      if (!captchaId || !captchaAnswer) {
-        console.log(`[LOGIN] ❌ CAPTCHA ausente - "${username}" (IP: ${ip})`);
-        logSecurityEvent('LOGIN_CAPTCHA_MISSING', {
-          username,
-          ip,
-          reason: 'CAPTCHA não fornecido'
-        });
-        return res.status(400).json({ 
-          success: false, 
-          message: 'CAPTCHA é obrigatório.',
-          requireCaptcha: true
-        });
-      }
 
-      const captchaValidation = validateCaptcha(captchaId, captchaAnswer);
-      if (!captchaValidation.valid) {
-        console.log(`[LOGIN] ❌ CAPTCHA inválido - "${username}" (IP: ${ip}) - ${captchaValidation.reason}`);
-        logSecurityEvent('LOGIN_CAPTCHA_INVALID', {
-          username,
-          ip,
-          reason: captchaValidation.reason
-        });
-        return res.status(400).json({ 
-          success: false, 
-          message: captchaValidation.reason,
-          requireCaptcha: true,
-          attemptsRemaining: captchaValidation.attemptsRemaining
-        });
-      }
-    } else {
+    if (isExternalRequest) {
       const panelHint = requestedPanel ? ` plano=${requestedPanel}` : ' (busca nos 5 planos)';
       console.log(`[LOGIN] 🔑 Requisição externa via API key - "${username}"${panelHint} (IP: ${ip})`);
     }
