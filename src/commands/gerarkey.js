@@ -67,7 +67,7 @@ function resolveTempo(interaction) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('gerarkey')
-    .setDescription('Gera uma key com duração (ou lifetime) e salva no banco')
+    .setDescription('Gera keys: tempo, plano e quantidade')
     .addIntegerOption((option) =>
       option
         .setName('tempo')
@@ -85,6 +85,14 @@ module.exports = {
         )
     )
     .addStringOption((option) => applyPlanoChoices(option))
+    .addIntegerOption((option) =>
+      option
+        .setName('quantidade')
+        .setDescription('Quantas keys gerar (1 a 25)')
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(25)
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
@@ -115,25 +123,17 @@ module.exports = {
       return interaction.editReply('❌ Duração inválida. Tente novamente.');
     }
 
+    const quantidade = interaction.options.getInteger('quantidade');
+    if (!Number.isInteger(quantidade) || quantidade < 1 || quantidade > 25) {
+      return interaction.editReply('❌ Quantidade inválida. Use de **1** a **25**.');
+    }
+
     const keysTable = getKeyTableName(panelId);
     if (!keysTable) {
       return interaction.editReply('❌ Painel inválido. Tente novamente.');
     }
 
     try {
-      let key;
-      let tentativas = 0;
-
-      while (tentativas < 5) {
-        key = gerarKey();
-        const [existente] = await pool.query(
-          `SELECT id FROM \`${keysTable}\` WHERE key_value = ? LIMIT 1`,
-          [key]
-        );
-        if (existente.length === 0) break;
-        tentativas++;
-      }
-
       let creatorAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
       try {
         creatorAvatar = interaction.user.displayAvatarURL({ size: 128, extension: 'png' });
@@ -143,16 +143,37 @@ module.exports = {
         } catch (__) {}
       }
 
-      await pool.query(
-        `INSERT INTO \`${keysTable}\` (key_value, is_lifetime, duration_days, creator_avatar, panel_id)
-         VALUES (?, ?, ?, ?, ?)`,
-        [key, isLifetime ? 1 : 0, isLifetime ? null : durationDays, creatorAvatar, panelId]
-      );
+      const geradas = [];
+
+      for (let i = 0; i < quantidade; i++) {
+        let key;
+        let tentativas = 0;
+
+        while (tentativas < 5) {
+          key = gerarKey();
+          const [existente] = await pool.query(
+            `SELECT id FROM \`${keysTable}\` WHERE key_value = ? LIMIT 1`,
+            [key]
+          );
+          if (existente.length === 0) break;
+          tentativas++;
+        }
+
+        await pool.query(
+          `INSERT INTO \`${keysTable}\` (key_value, is_lifetime, duration_days, creator_avatar, panel_id)
+           VALUES (?, ?, ?, ?, ?)`,
+          [key, isLifetime ? 1 : 0, isLifetime ? null : durationDays, creatorAvatar, panelId]
+        );
+
+        geradas.push(key);
+      }
 
       const label = isLifetime ? 'Lifetime' : `${durationDays} dia(s)`;
+      const preview = geradas[0].substring(0, 8) + '...';
 
       logSecurityEvent('DISCORD_KEY_GENERATED', {
-        key: key.substring(0, 8) + '...',
+        key: preview,
+        count: geradas.length,
         duration: label,
         plano: panelId,
         createdBy: interaction.user.tag,
@@ -164,11 +185,12 @@ module.exports = {
         interaction.user.tag,
         interaction.guild?.name || 'DM',
         true,
-        `Key ${label} | plano: ${panelId}`
+        `${geradas.length} key(s) ${label} | plano: ${panelId}`
       );
 
+      const lista = geradas.join('\n');
       return interaction.editReply(
-        `🔑 Key gerada:\n\`\`\`${key}\`\`\`\n⏱ Duração: **${label}**\n📦 Plano: **${formatPlanoLabel(panelId)}**\n` +
+        `🔑 **${geradas.length}** key(s) gerada(s):\n\`\`\`${lista}\`\`\`\n⏱ Duração: **${label}**\n📦 Plano: **${formatPlanoLabel(panelId)}**\n` +
         `Use no Register do menu com \`"panel": "${panelId}"\`.`
       );
     } catch (err) {
