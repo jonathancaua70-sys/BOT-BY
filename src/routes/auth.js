@@ -271,7 +271,7 @@ async function handlePanelLogin(req, res, panelId) {
     const sanitizedUsername = sanitizeInput(username);
 
     const [rows] = await pool.query(
-      `SELECT id, username, password, user_avatar FROM \`${usersTable}\` WHERE username = ? LIMIT 1`,
+      `SELECT id, username, password, user_avatar, expires_at, is_lifetime FROM \`${usersTable}\` WHERE username = ? LIMIT 1`,
       [sanitizedUsername]
     );
 
@@ -298,6 +298,8 @@ async function handlePanelLogin(req, res, panelId) {
       panel: panelId,
       panel_type: panel.type,
       tier: panel.tier,
+      expires_at: user.expires_at || null,
+      is_lifetime: Number(user.is_lifetime) === 1,
     };
 
     if (isExternalRequest) {
@@ -359,6 +361,58 @@ async function handlePanelLogin(req, res, panelId) {
 
 PANEL_IDS.forEach((panelId) => {
   router.post(`/login/${panelId}`, applyRateLimit('login'), (req, res) => handlePanelLogin(req, res, panelId));
+});
+
+// POST /api/user/products
+// Body: { "username": "...", "password": "..." }
+// Retorna todos os produtos (paineis) que o usuario possui + expiracao.
+router.post('/user/products', applyRateLimit('login'), async (req, res) => {
+  const startTime = Date.now();
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ success: false, message: 'Usuario e senha sao obrigatorios.' });
+    }
+
+    const sanitizedUsername = sanitizeInput(username);
+    const products = [];
+
+    for (const panelId of PANEL_IDS) {
+      const usersTable = getUsersTableName(panelId);
+      if (!usersTable) continue;
+
+      try {
+        const [rows] = await pool.query(
+          `SELECT password, expires_at, is_lifetime FROM \`${usersTable}\` WHERE username = ? LIMIT 1`,
+          [sanitizedUsername]
+        );
+        if (rows.length === 0) continue;
+
+        const senhaCorreta = await bcrypt.compare(password, rows[0].password);
+        if (!senhaCorreta) continue;
+
+        products.push({
+          panel: panelId,
+          expires_at: rows[0].expires_at || null,
+          is_lifetime: Number(rows[0].is_lifetime) === 1,
+        });
+      } catch (tableErr) {
+        console.error(`Erro ao consultar ${usersTable}:`, tableErr.message);
+      }
+    }
+
+    const responseTime = Date.now() - startTime;
+    await logBotApi('/api/user/products', 'POST', ip, true, responseTime);
+
+    return res.status(200).json({ success: true, products });
+  } catch (err) {
+    console.error('Erro no /user/products:', err);
+    const responseTime = Date.now() - startTime;
+    await logBotApi('/api/user/products', 'POST', ip, false, responseTime);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
+  }
 });
 
 // GET /api/panels - lista painéis disponíveis
