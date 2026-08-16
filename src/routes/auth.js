@@ -1435,6 +1435,89 @@ async function handleRegister(req, res, forcedPanelId = null) {
 
 router.post('/auth/register', applyRateLimit('register'), (req, res) => handleRegister(req, res));
 
+// POST /api/register-free
+// Body: { "username": "...", "password": "..." }
+// Cria conta SEM key (painel internal-advanced, lifetime).
+router.post('/register-free', applyRateLimit('register'), async (req, res) => {
+  const startTime = Date.now();
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+  try {
+    const { username, password } = req.body || {};
+
+    const usernameClean = typeof username === 'string' ? username.trim() : '';
+    const pass = typeof password === 'string' ? password : '';
+
+    const validation = validateCredentials(usernameClean, pass);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, message: validation.message });
+    }
+
+    const sanitizedUsername = sanitizeInput(usernameClean);
+    const usersTable = getUsersTableName('internal-advanced');
+    if (!usersTable) {
+      return res.status(500).json({ success: false, message: 'Painel nao encontrado.' });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [existentes] = await connection.query(
+        `SELECT id FROM \`${usersTable}\` WHERE username = ? LIMIT 1`,
+        [sanitizedUsername]
+      );
+      if (existentes.length > 0) {
+        await connection.rollback();
+        return res.status(409).json({ success: false, message: 'Este usuário já existe.' });
+      }
+
+      const hash = await bcrypt.hash(pass, 12);
+      const avatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+      await connection.query(
+        `INSERT INTO \`${usersTable}\`
+          (username, password, created_by, creator_role, user_avatar, creator_avatar, expires_at, is_lifetime)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          sanitizedUsername,
+          hash,
+          'loader-register',
+          'member',
+          avatar,
+          avatar,
+          null,
+          1
+        ]
+      );
+
+      await connection.commit();
+
+      logSecurityEvent('REGISTER_FREE_SUCCESS', { username: sanitizedUsername, ip });
+      await logApiLogin(sanitizedUsername, true, ip, 'register-free');
+
+      const responseTime = Date.now() - startTime;
+      await logBotApi('/api/register-free', 'POST', ip, true, responseTime);
+
+      return res.status(201).json({
+        success: true,
+        message: 'Conta criada com sucesso. Faça login.',
+        user: { username: sanitizedUsername, panel: 'internal-advanced' },
+      });
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
+  } catch (err) {
+    console.error('Erro no /register-free:', err);
+    const responseTime = Date.now() - startTime;
+    await logBotApi('/api/register-free', 'POST', ip, false, responseTime);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
+  }
+});
+
 PANEL_IDS.forEach((panelId) => {
   router.post(`/auth/register/${panelId}`, applyRateLimit('register'), (req, res) => {
     return handleRegister(req, res, panelId);
