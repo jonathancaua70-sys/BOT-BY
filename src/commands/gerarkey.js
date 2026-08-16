@@ -1,4 +1,12 @@
-const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  MessageFlags,
+  ContainerBuilder,
+  TextDisplayBuilder,
+  SeparatorBuilder,
+  SeparatorSpacingSize,
+} = require('discord.js');
 const crypto = require('crypto');
 const { pool } = require('../db');
 const fs = require('fs');
@@ -64,6 +72,66 @@ function resolveTempo(interaction) {
   return null;
 }
 
+function v2Flags() {
+  return MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral;
+}
+
+function editV2(interaction, container) {
+  return interaction.editReply({
+    flags: v2Flags(),
+    components: [container],
+  });
+}
+
+function buildErrorContainer(message) {
+  return new ContainerBuilder()
+    .setAccentColor(0xff4d4d)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`# Algo deu errado\n${message}`)
+    );
+}
+
+function buildKeysContainer({ userId, planoLabel, panelId, label, keys }) {
+  const lista = keys
+    .map((key, i) => `\`${String(i + 1).padStart(2, '0')}\`  \`${key}\``)
+    .join('\n');
+
+  return new ContainerBuilder()
+    .setAccentColor(0x9b5cff)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        [
+          '# Keys geradas',
+          `<@${userId}> · mensagem só pra você`,
+        ].join('\n')
+      )
+    )
+    .addSeparatorComponents(
+      new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small)
+    )
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        [
+          `📦 **Plano** — ${planoLabel}`,
+          `⏱ **Duração** — ${label}`,
+          `🔢 **Quantidade** — ${keys.length}`,
+        ].join('\n')
+      )
+    )
+    .addSeparatorComponents(
+      new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small)
+    )
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        [
+          lista,
+          '',
+          `-# Register do menu: \`"panel": "${panelId}"\``,
+        ].join('\n')
+      )
+    );
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('gerarkey')
@@ -101,7 +169,7 @@ module.exports = {
     const plano = getPlanoFromInteraction(interaction);
     const planoCheck = validatePlano(plano);
     if (!planoCheck.ok) {
-      return interaction.editReply(planoCheck.message);
+      return editV2(interaction, buildErrorContainer(planoCheck.message));
     }
 
     const { panelId } = planoCheck;
@@ -110,27 +178,32 @@ module.exports = {
 
     const resolved = resolveTempo(interaction);
     if (!resolved) {
-      return interaction.editReply(
-        '❌ Opção **tempo** não chegou no bot.\n' +
-        '1) No PC, na pasta do bot: `node src/deployCommands.js`\n' +
-        '2) No Discord: Ctrl+R (recarregar) ou sair/entrar no server\n' +
-        '3) Digite `/gerarkey` de novo e **escolha** o tempo na lista'
+      return editV2(
+        interaction,
+        buildErrorContainer(
+          [
+            'A opção **tempo** não chegou no bot.',
+            '1. Rode `node src/deployCommands.js`',
+            '2. No Discord: Ctrl+R',
+            '3. Digite `/gerarkey` de novo e escolha o tempo na lista',
+          ].join('\n')
+        )
       );
     }
 
     const { isLifetime, durationDays } = resolved;
     if (!isLifetime && !Number.isFinite(durationDays)) {
-      return interaction.editReply('❌ Duração inválida. Tente novamente.');
+      return editV2(interaction, buildErrorContainer('Duração inválida. Tente novamente.'));
     }
 
     const quantidade = interaction.options.getInteger('quantidade');
     if (!Number.isInteger(quantidade) || quantidade < 1 || quantidade > 25) {
-      return interaction.editReply('❌ Quantidade inválida. Use de **1** a **25**.');
+      return editV2(interaction, buildErrorContainer('Quantidade inválida. Use de **1** a **25**.'));
     }
 
     const keysTable = getKeyTableName(panelId);
     if (!keysTable) {
-      return interaction.editReply('❌ Painel inválido. Tente novamente.');
+      return editV2(interaction, buildErrorContainer('Painel inválido. Tente novamente.'));
     }
 
     try {
@@ -188,19 +261,25 @@ module.exports = {
         `${geradas.length} key(s) ${label} | plano: ${panelId}`
       );
 
-      const lista = geradas.join('\n');
-      return interaction.editReply(
-        `🔑 **${geradas.length}** key(s) gerada(s):\n\`\`\`${lista}\`\`\`\n⏱ Duração: **${label}**\n📦 Plano: **${formatPlanoLabel(panelId)}**\n` +
-        `Use no Register do menu com \`"panel": "${panelId}"\`.`
+      return editV2(
+        interaction,
+        buildKeysContainer({
+          userId: interaction.user.id,
+          planoLabel: formatPlanoLabel(panelId),
+          panelId,
+          label,
+          keys: geradas,
+        })
       );
     } catch (err) {
       console.error('Erro no /gerarkey:', err);
       if (err && err.code === 'ER_BAD_FIELD_ERROR') {
-        return interaction.editReply(
-          '❌ Banco desatualizado. Reinicie o bot ou rode: `node scripts/setupDatabase.js`'
+        return editV2(
+          interaction,
+          buildErrorContainer('Banco desatualizado. Reinicie o bot ou rode: `node scripts/setupDatabase.js`')
         );
       }
-      return interaction.editReply('❌ Ocorreu um erro ao gerar a key.');
+      return editV2(interaction, buildErrorContainer('Ocorreu um erro ao gerar a key.'));
     }
   },
 };
